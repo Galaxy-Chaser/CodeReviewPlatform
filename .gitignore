@@ -1,0 +1,8 @@
+data/
+deploy/.env
+node_modules/
+*.log
+target/
+dist/
+outputs/
+runtime/

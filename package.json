@@ -1,0 +1,22 @@
+{
+  "name": "code-health-center",
+  "version": "1.16.0",
+  "private": true,
+  "description": "Local Java code health center with SonarQube integration",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "check:platform": "node scripts/check-platform.js",
+    "check:browser": "node scripts/check-browser.js",
+    "check:iteration": "node scripts/check-iteration.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.11.2"
+  }
+}

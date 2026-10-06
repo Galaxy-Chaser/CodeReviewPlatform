@@ -1,0 +1,45 @@
+name: Iteration acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    # Windows also executes the Windows-specific environment tests without skips.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      HEALTH_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install browser
+        run: pnpm exec playwright install chromium
+      - name: Run complete iteration acceptance
+        run: pnpm run check:iteration
+      - name: Preserve reports and failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iteration-acceptance-${{ github.sha }}
+          path: outputs/iteration-check/
+          if-no-files-found: warn
+          retention-days: 14

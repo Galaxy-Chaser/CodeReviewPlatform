@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>CodeHealth · 本地代码体检中心</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview"><span class="brand-mark">c<span>h</span></span><span>CodeHealth<small>本地代码体检中心</small></span></a>
+    <div class="workspace"><span class="workspace-icon">B</span><div>Local workspace<small>你的代码，只在本地</small></div><span class="tiny-dot"></span></div>
+    <div class="nav-label">工作空间</div>
+    <nav id="navigation">
+      <a href="#overview" data-page="overview"><span>◫</span>总览</a>
+      <a href="#projects" data-page="projects"><span>▱</span>项目管理</a>
+      <a href="#issues" data-page="issues"><span>⊙</span>问题中心<span id="issue-count" class="nav-count">0</span></a>
+      <a href="#history" data-page="history"><span>◷</span>扫描历史</a>
+      <a href="#quality" data-page="quality"><span>✓</span>AI 质量控制</a>
+      <a href="#pipeline" data-page="pipeline"><span>⇥</span>验收流水线</a>
+      <div class="nav-label">管理</div>
+      <a href="#archives" data-page="archives"><span>▣</span>归档中心</a>
+      <a href="#gate" data-page="gate"><span>◇</span>质量门禁</a>
+      <a href="#settings" data-page="settings"><span>⚙</span>环境设置</a>
+    </nav>
+    <div class="local-card"><span class="tiny-dot"></span><strong>本地优先 · 安全运行</strong><p>项目源码和检查记录留在你的电脑，无需上传云端。</p><a href="#settings">查看运行环境 ↗</a></div>
+    <div class="sidebar-foot"><div class="avatar">L</div><div>本地开发者<small>Local workspace</small></div><span>⌘</span></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><div>工作空间 <span>/</span> <strong id="breadcrumb">总览</strong></div><div class="top-right"><span class="tiny-dot"></span> LOCAL ONLY <span class="divider"></span><span id="today"></span><span class="avatar small">L</span></div></header>
+    <main id="content" aria-live="polite"></main>
+    <footer><span>CodeHealth / 把代码质量，变成日常习惯。</span><span>本地运行 · v1.16.0</span></footer>
+  </div>
+  <dialog id="dialog"><div id="dialog-content"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+name: code-health-center
+services:
+  sonarqube:
+    image: sonarqube:community
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonarqube
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:?Run scripts/sonar-start.ps1 to initialize the password}
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_extensions:/opt/sonarqube/extensions
+      - sonar_logs:/opt/sonarqube/logs
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_DB: sonarqube
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:?Database password is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonarqube"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - sonar_postgres:/var/lib/postgresql/data
+volumes:
+  sonar_data:
+  sonar_extensions:
+  sonar_logs:
+  sonar_postgres:
