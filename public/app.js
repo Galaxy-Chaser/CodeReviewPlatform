@@ -1,5 +1,5 @@
 const $ = selector => document.querySelector(selector);
-const labels = { overview: '总览', projects: '项目管理', issues: '问题中心', history: '扫描历史', quality: 'AI 质量控制', pipeline: '验收流水线', gate: '质量门禁', settings: '环境设置', archives: '归档中心' };
+const labels = { overview: '总览', projects: '项目管理', issues: '问题中心', history: '扫描历史', quality: 'AI 质量控制', pipeline: '验收流水线', work: '需求与任务', knowledge: '问题知识库', agents: '本地 agent', gate: '质量门禁', settings: '环境设置', archives: '归档中心' };
 const severityNames = { HIGH: '高风险', BLOCKER: '阻断', CRITICAL: '严重', MEDIUM: '中风险', MAJOR: '主要', LOW: '低风险', MINOR: '次要', INFO: '提示' };
 let state, page = 'overview', environmentData, selectedProject = '', severity = '', search = '', polling, toastTimer;
 let viewedScanId = null;
@@ -195,7 +195,7 @@ function render() {
   $('#breadcrumb').textContent = labels[page];
   $('#issue-count').textContent = state.stats.issues;
   document.querySelectorAll('[data-page]').forEach(a => a.classList.toggle('active', a.dataset.page === page));
-  $('#content').innerHTML = ({ overview, projects: projectsPage, issues: issuesPage, history: historyPage, quality: qualityPage, pipeline: pipelinePage, gate: gatePage, settings: settingsPage, archives: archivesPage })[page]();
+  $('#content').innerHTML = ({ overview, projects: projectsPage, issues: issuesPage, history: historyPage, quality: qualityPage, pipeline: pipelinePage, work: workPage, knowledge: workPage, agents: agentsPage, gate: gatePage, settings: settingsPage, archives: archivesPage })[page]();
 }
 
 /** 方案页面只读取项目与运行摘要；完整场景和历史证据在打开报告时按需获取。 */
@@ -345,7 +345,7 @@ async function readinessModal(projectId) {
 /** Show review provenance without hiding findings or weakening automatic checks. */
 function issueReviewControls(issue, reportId) {
   const r = issue.review;
-  return `<div class="issue-review"><span class="badge">${e(reviewNames[r?.status || 'open'])}</span>${r?.event ? `<span class="badge warning">${r.event === 'returned' ? '再次出现' : '证据变化'} · ${r.status === 'open' ? '需重新审查' : '已记录审查'}</span>` : ''}${r?.reason ? `<p class="subtle">${e(r.reason)}</p>` : ''}${button('审查问题', 'issue-review', `data-id="${reportId}" data-tracking="${e(issue.trackingId)}"`, 'small')}</div>`;
+  return `<div class="issue-review"><span class="badge">${e(reviewNames[r?.status || 'open'])}</span>${r?.event ? `<span class="badge warning">${r.event === 'returned' ? '再次出现' : '证据变化'} · ${r.status === 'open' ? '需重新审查' : '已记录审查'}</span>` : ''}${r?.reason ? `<p class="subtle">${e(r.reason)}</p>` : ''}${button('审查问题', 'issue-review', `data-id="${reportId}" data-tracking="${e(issue.trackingId)}"`, 'small')}${state.scans.some(s => s.id === reportId && s.projectId) ? button('转为跟踪任务', 'work-from-issue', `data-id="${reportId}" data-tracking="${e(issue.trackingId)}"`, 'small') : ''}</div>`;
 }
 
 /** Load one report and edit a specific finding with its original and previous review evidence. */
@@ -428,6 +428,7 @@ async function exportReport(options) {
 
 document.addEventListener('click', async event => {
   const control = event.target.closest('[data-action]'); if (!control) return;
+  if (control.dataset.action.startsWith('work-')) return;
   const { action, id, project, file, line } = control.dataset;
   try {
     if (action === 'pipeline-open') { pipelineProjectId = id; location.hash = 'pipeline'; if (page === 'pipeline') render(); }
@@ -580,6 +581,7 @@ document.addEventListener('click', async event => {
   } catch (error) { toast(error.message); control.disabled = false; if (action === 'backup') control.textContent = '创建数据备份'; if (action === 'environment' || action.startsWith('sonar-')) render(); }
 });
 document.addEventListener('submit', async event => {
+  if (event.target.getAttribute('id')?.startsWith('work-')) return;
   event.preventDefault(); const form = event.target; const data = new FormData(form); const submit = form.querySelector('[type="submit"]');
   // A field named "id" shadows HTMLFormElement.id; always read the actual attribute.
   const formId = form.getAttribute('id');

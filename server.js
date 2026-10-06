@@ -32,6 +32,7 @@ const { runPlatformCheck, platformCheckView } = require('./lib/platform-check');
 const { runBrowserRegression } = require('./scripts/check-browser');
 const { browserCheckView } = require('./lib/browser-check');
 const { runIterationCheck, iterationCheckView } = require('./lib/iteration-check');
+const { createWorkApi } = require('./lib/work-api');
 const DATA = process.env.HEALTH_DATA_DIR || path.join(ROOT, 'data');
 const port = Number(process.env.PORT || 4310);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 必须是 1 到 65535 之间的整数');
@@ -56,6 +57,17 @@ let iterationCheckActive = false;
 let initialized = false;
 let writeQueue = Promise.resolve();
 let revision = 0;
+const workApi = createWorkApi(DATA, {
+  projects: () => state.projects, body, brief: loadBrief, plan: loadPipeline,
+  report: async id => { const r = await loadReport(id); return { ...r, issues: identify(r) }; },
+  approve: async task => {
+    const report = await loadReport(task.submission?.reportId);
+    if (report.projectId !== task.projectId) fail('提交报告属于其他项目');
+    const current = await checkFreshness(report), latest = state.scans.find(s => s.projectId === task.projectId);
+    const ready = readiness(report, current, latest?.id);
+    if (ready.status !== 'READY') fail('提交报告尚未满足当前验收条件：' + [...ready.blockers, ...ready.missing].join('；'), 409);
+  }
+});
 
 /** Persist state atomically and sequentially, so a crash cannot leave a half-written JSON file. */
 function save() {
@@ -296,6 +308,8 @@ async function environment() {
 }
 
 async function api(req, res, url) {
+  if (url.pathname.startsWith('/api/work/') || url.pathname.startsWith('/api/agent/')) return json(res, await workApi(req, url));
+  if (req.headers.authorization) fail('本地 agent 只能调用专用协作接口', 403);
   if (req.method === 'GET' && url.pathname === '/api/iteration-check') {
     const id = state.iterationCheckId;
     if (!id) return json(res, { status: 'NOT_CHECKED', report: null });
@@ -642,7 +656,7 @@ async function start() {
         }
         return await api(req, res, url);
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'application/javascript'], '/style.css': ['style.css', 'text/css'] };
+      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'application/javascript'], '/work.js': ['work.js', 'application/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (req.method !== 'GET' || !assets[url.pathname]) fail('页面不存在', 404);
       const [file, mime] = assets[url.pathname];
       res.writeHead(200, { 'Content-Type': `${mime}; charset=utf-8` }); res.end(await fs.readFile(path.join(ROOT, 'public', file)));
