@@ -12,7 +12,8 @@ const scenarios = [
   ['project', '添加项目与页面保存'], ['duplicate', '重复项目拒绝与原数据保留'],
   ['scan', '实际扫描与完成状态'], ['acceptance', '五类验收证据保存'],
   ['download', '报告导出与实际下载'], ['pipeline', '场景失败阻断与复验历史'],
-  ['stale', '源码变化阻断旧验收'], ['mobile', '窄屏导航与报告显示']
+  ['stale', '源码变化阻断旧验收'], ['paging', '大量问题翻页、审查与完整导出'], ['setup', '按需配置与错误保存反馈'],
+  ['release', '关闭详情与离开列表释放缓存'], ['mobile', '窄屏文字导航与报告显示']
 ];
 
 /** 启动独立端口，返回子进程；启动失败或超时必须报错，不以等待时间当作就绪。 */
@@ -66,7 +67,12 @@ async function runBrowserRegression(options = {}) {
     child = await startServer(root, path.join(temporary, 'data'), port);
     const read = async route => { const r = await fetch(base + route); assert.equal(r.status, 200); return r.json(); };
     const close = async () => { if (await page.locator('#dialog').isVisible()) await page.getByRole('button', { name: '关闭', exact: true }).click(); };
-    const nav = async name => { await close(); await page.locator('#navigation').getByRole('link', { name: new RegExp(name) }).click(); };
+    const nav = async name => {
+      await close(); const link = page.locator('#navigation').getByRole('link', { name: new RegExp(name) });
+      const target = (await link.getAttribute('href')).slice(1); await link.click();
+      // 点击后等待实际页面渲染，避免在 hashchange 到达前检查上一个页面的数据。
+      await page.waitForFunction(id => document.querySelector('#navigation a.active')?.dataset.page === id, target);
+    };
     const add = async () => {
       await page.locator('#content .page-heading [data-action="add-project"]').click();
       await page.getByLabel('项目名称', { exact: true }).fill('页面自动回归示例');
@@ -144,11 +150,98 @@ async function runBrowserRegression(options = {}) {
         await page.getByText('STALE', { exact: true }).waitFor();
         await fs.writeFile(sourceFile, original);
       },
-      mobile: async () => {
-        await close(); await page.setViewportSize({ width: 390, height: 844 }); await nav('验收流水线');
+      paging: async () => {
+        const existingIds = new Set((await read('/api/state')).scans.map(scan => scan.id));
+        await fs.writeFile(sourceFile, 'class Flow {\n' + Array.from({ length: 62 }, (_, n) => `void m${n}() { try { throw new RuntimeException(); } catch (Exception e) {} }`).join('\n') + '\n}');
+        await nav('项目管理'); await page.locator('[data-action="scan-project"]').click();
+        await page.locator('#scan-form').getByRole('button', { name: '开始检查', exact: true }).click();
+        let reportId;
+        for (let i = 0; i < 300; i++) {
+          const state = await read('/api/state');
+          if (!state.active && state.scans[0]?.status === 'completed' && !existingIds.has(state.scans[0].id)) { reportId = state.scans[0].id; break; }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        assert.ok(reportId, '大量问题扫描没有完成');
+        const view = await read('/api/scan/view?id=' + reportId);
+        assert.equal(view.issueCount, 62); assert.equal(view.issues, undefined); assert.equal(view.sourceSnapshot.files, undefined);
+        await nav('扫描历史'); await page.locator(`[data-action="scan-detail"][data-id="${reportId}"]`).click();
+        await page.getByRole('button', { name: '修复任务清单', exact: true }).click();
+        for (const [count, range] of [[25, '1–25'], [25, '26–50'], [12, '51–62']]) {
+          await page.getByText('显示第 ' + range + ' 条，共 62 条', { exact: true }).waitFor();
+          assert.equal(await page.locator('#dialog .repair-task').count(), count);
+          if (count !== 12) await page.getByRole('button', { name: '下一页', exact: true }).click();
+        }
+        assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).count(), 0);
+        await page.getByRole('button', { name: '上一页', exact: true }).click();
+        await page.getByText('显示第 26–50 条，共 62 条', { exact: true }).waitFor();
+        const taskImage = `browser-${id}-task-page.png`;
+        await page.screenshot({ path: path.join(path.dirname(output), taskImage) }); report.images.push(taskImage);
+        await page.locator('#dialog .repair-task').first().getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByLabel('判断依据（8 到 2000 字）', { exact: true }).fill('自动回归确认第二页问题审查可以保存，保持原门禁不变。');
+        await page.getByRole('button', { name: '保存审查', exact: true }).click();
+        await page.locator('#issue-review-form').waitFor({ state: 'hidden' });
+        await page.getByText('显示第 26–50 条，共 62 条', { exact: true }).waitFor();
+        await page.getByText('自动回归确认第二页问题审查可以保存，保持原门禁不变。', { exact: true }).waitFor();
+        await page.locator('#dialog .repair-task').nth(1).getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByLabel('审查状态', { exact: true }).selectOption('confirmed');
+        await page.getByLabel('判断依据（8 到 2000 字）', { exact: true }).fill('连续审查第二个问题，确认依据保存并回到同一页。');
+        const reviewImage = `browser-${id}-review-return.png`;
+        await page.screenshot({ path: path.join(path.dirname(output), reviewImage) }); report.images.push(reviewImage);
+        await page.getByRole('button', { name: '保存审查', exact: true }).click();
+        await page.getByText('显示第 26–50 条，共 62 条', { exact: true }).waitFor();
+        await page.getByText('连续审查第二个问题，确认依据保存并回到同一页。', { exact: true }).waitFor();
+        await page.locator('#dialog .repair-task').nth(2).getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByRole('button', { name: '返回修复清单', exact: true }).click();
+        await page.getByText('显示第 26–50 条，共 62 条', { exact: true }).waitFor();
+        const full = await read('/api/report?id=' + reportId);
+        assert.equal(full.issues.length, 62); assert.ok(full.issues.some(issue => issue.review?.reason.includes('第二页')));
+        assert.equal(full.issues.filter(issue => issue.review?.reason).length, 2); assert.equal(full.gate.status, 'FAILED');
+        await page.getByRole('button', { name: '导出 Markdown', exact: true }).click();
+        const downloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载副本', exact: true }).click();
+        const download = await downloaded, file = path.join(temporary, 'all-tasks.md'); await download.saveAs(file);
+        assert.equal((await fs.readFile(file, 'utf8')).match(/^## \d+\. /gm).length, 62);
+        await fs.writeFile(sourceFile, original);
+      },
+        setup: async () => {
+          await nav('环境设置');
+          assert.equal(await page.locator('#full-setup').getAttribute('open'), null);
+          await page.getByText('本地规则检查', { exact: true }).waitFor();
+          await page.getByRole('link', { name: '配置完整体检', exact: true }).click();
+          await page.getByLabel('SonarQube 地址', { exact: true }).fill('https://example.com');
+          await page.getByRole('button', { name: '保存设置', exact: true }).click();
+          await page.locator('#settings-form .form-error').waitFor();
+          assert.notEqual((await read('/api/state')).settings.sonarUrl, 'https://example.com');
+          await page.getByLabel('SonarQube 地址', { exact: true }).fill('http://localhost:9000');
+          await page.getByRole('button', { name: '保存设置', exact: true }).click();
+          await page.waitForFunction(() => !document.querySelector('#full-setup').open);
+          assert.equal((await read('/api/state')).settings.sonarUrl, 'http://localhost:9000');
+        },
+        release: async () => {
+          await nav('扫描历史');
+          await page.locator(`[data-action="scan-detail"][data-id="${scanId}"]`).click();
+          await page.getByRole('button', { name: '关闭', exact: true }).click();
+          await page.waitForFunction(() => document.querySelector('#dialog-content').childElementCount === 0);
+          await nav('问题中心'); await page.locator('#content .issue-row, #content .empty').first().waitFor();
+          await nav('环境设置');
+          assert.equal(await page.evaluate(() => Object.keys(listData).length), 0);
+          assert.equal(await page.evaluate(() => Object.keys(listRequests).length), 0);
+          await nav('需求与任务'); await page.getByRole('heading', { name: '需求记录', exact: true }).waitFor();
+          await nav('环境设置');
+          assert.equal(await page.evaluate(() => workData === null && workController === null), true);
+        },
+        mobile: async () => {
+          await close(); await page.setViewportSize({ width: 390, height: 844 }); await nav('验收流水线');
+          await page.getByRole('button', { name: '展开功能导航', exact: true }).click();
+          assert.equal(await page.getByRole('button', { name: '收起功能导航', exact: true }).getAttribute('aria-expanded'), 'true');
+          assert.equal(await page.locator('#navigation [data-page="settings"]').evaluate(el => parseFloat(getComputedStyle(el).fontSize) > 0), true);
+          await page.getByRole('button', { name: '收起功能导航', exact: true }).click();
+          assert.equal(await page.getByRole('button', { name: '展开功能导航', exact: true }).getAttribute('aria-expanded'), 'false');
+          await page.getByRole('button', { name: '展开功能导航', exact: true }).click();
+          await nav('验收流水线');
+          assert.equal(await page.getByRole('button', { name: '展开功能导航', exact: true }).getAttribute('aria-expanded'), 'false');
         await page.getByRole('heading', { name: '验收流水线', exact: true }).waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
-        await page.getByRole('button', { name: '查看流水线', exact: true }).click();
+        await page.getByRole('button', { name: '查看流水线', exact: true }).first().click();
         await page.getByRole('heading', { name: '验收流水线报告', exact: true }).waitFor();
         assert.equal(await page.evaluate(() => document.querySelector('#dialog').getBoundingClientRect().width <= document.documentElement.clientWidth), true);
       }

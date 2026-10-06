@@ -1,6 +1,7 @@
 const workNames = { requirements: '需求', tasks: '任务', knowledge: '知识' };
 const workStatuses = { ready: '待领取', in_progress: '处理中', review: '待人工审核', done: '已审核完成', blocked: '暂时阻塞', draft: '待审核草稿', published: '已发布', open: '尚未完成', fulfilled: '关联任务已确认' };
 let workKind = 'requirements', workProject = '', workStatus = '', workSearch = '', workOffset = 0, workData, workSequence = 0, workFormRow, workFormKind;
+let workController;
 
 /** 需求全文按页读取；请求过期后不能覆盖新筛选，也不进入平台首页状态。 */
 function workPage() {
@@ -19,10 +20,11 @@ function workPage() {
     panel(`${workNames[kind]}记录`, list.loading ? '<div class="panel-body">正在读取协作记录…</div>' : list.error ? `<div class="panel-body notice red">${e(list.error)}</div>` : !list.total ? '<div class="panel-body">当前没有匹配记录，可新建一条开始。</div>' : `<div class="table-wrap"><table><thead><tr><th>名称 / 项目</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${list.rows.map(r => `<tr><td>${e(r.title)}<small>${e(state.projects.find(p => p.id === r.projectId)?.name || '通用知识')}${r.tags ? ' · ' + r.tags.map(e).join('、') : ''}</small></td><td>${e(workStatuses[r.status])}${kind === 'requirements' ? `<small>当前需求版本完成 ${r.done} / ${r.tasks} 个任务</small>` : kind === 'tasks' ? `<small>${e(r.owner)}${r.leaseExpired ? ' · 领取已过期，可重新领取' : r.expiresAt ? ' · 到期 ' + e(time(r.expiresAt)) : ''}${r.requireReport ? ' · 要求实际扫描验收' : ' · 人工确认，不代表自动质量通过'}</small>` : ''}</td><td>${e(time(r.updatedAt))}</td><td>${button('查看记录', 'work-detail', `data-kind="${kind}" data-id="${r.id}"`, 'small')}</td></tr>`).join('')}</tbody></table></div><div class="panel-foot"><span>共 ${list.total} 条 · 第 ${Math.floor(list.offset / 25) + 1} 页</span><div class="buttons">${button('上一页', 'work-page', `data-offset="${list.offset - 25}" ${list.offset ? '' : 'disabled'}`, 'small')}${button('下一页', 'work-page', `data-offset="${list.offset + 25}" ${list.offset + 25 < list.total ? '' : 'disabled'}`, 'small')}</div></div>`);
 }
 async function loadWork(signature, kind) {
+  workController?.abort(); const controller = new AbortController(); workController = controller;
   const sequence = ++workSequence;
   try {
     const query = new URLSearchParams({ kind, projectId: workProject, status: workStatus, search: workSearch, offset: workOffset });
-    const result = await api('/api/work/list?' + query);
+    const result = await api('/api/work/list?' + query, undefined, controller.signal);
     if (workSequence !== sequence || workData?.signature !== signature) return;
     workData = { ...result, signature };
   } catch (error) { if (workSequence !== sequence || workData?.signature !== signature) return; workData = { signature, error: error.message }; }

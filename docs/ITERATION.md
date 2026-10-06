@@ -1,6 +1,38 @@
+## Version 1.20 continuous review and stale detail protection
+
+Finish criteria: saving or cancelling a repair-list review returns to its original scan/PR page; standalone issue-center review remains unchanged; obsolete scan/pipeline/detail reads cannot reopen closed dialogs or replace newer edits; failed reads release their slot for retry; cancelled navigation does not interrupt committed review writes.
+
+Verification: final complete iteration acceptance passed 104 automated tests and all 11 real browser workflows with current source evidence: outputs/iteration-check/report-d58caf3f-259b-4617-a71a-fb3f96908457.json. Controlled delayed responses exercise the actual scan detail functions and cancellation coordinator, including responses that ignore cancellation: closed reports stay closed, editing content survives old refreshes, newer reports win, connection failures permit retry and background refreshes do not cancel foreground work. Existing PR display/page contract testing remains passing.
+
+Real browser verification reviews two different findings on the second page of a 62-finding report, saves their separate reasons, returns to the same page after each save, cancels a third edit using the return button, confirms exactly two retained reviews and unchanged failed gate, and downloads all 62 repairs. The review form screenshot was visually inspected: outputs/iteration-check/browser-dbc212f3-0a89-4d4c-8909-2939fea55ef6-review-return.png. Page context retains only report ID, offset and scan/PR type; close and replacement clear it. The portable source package is updated without runtime data.
+
+Limits: automatic return preserves the page, not the exact scroll position. Delay races are controlled regression tests, not a claim about all network conditions or all dialogs. Review submissions retain their existing write semantics; canceling navigation prevents a late return but does not undo an already saved review. No dependency or configuration was added. Earlier live GitHub and Java/Sonar verification limits remain.
+
+## Version 1.19 lightweight report details and repair pages
+
+Finish criteria: detail pages keep real gate, counts, comparison and source-version evidence without transferring full findings or manifests; scan and PR repair pages contain at most 25 findings in stable risk order with global numbering; review actions and complete exports still work; original report APIs remain compatible.
+
+Verification: the complete iteration check passed 101 automated tests and all 11 browser flows with matching source evidence: outputs/iteration-check/report-9c4b0d39-12bd-425d-abdd-cf33458f67dd.json. Representative large-report checks retain 1,000 finding counts and 2,000 file counts while the display response is less than 1% of that fixture's complete response; the original report stays unchanged. Page checks preserve every occurrence and order, reject invalid offsets and unsupported query options, and handle empty/beyond-end pages. Real HTTP checks cover display evidence, full API compatibility and stable review IDs. The actual PR view is separately exercised with controlled display/page responses.
+
+Real browser verification scans 62 empty-catch findings, displays pages of 25, 25 and 12 entries, navigates back, saves a review from the second page and downloads all 62 numbered repairs. The second-page screenshot was visually inspected: outputs/iteration-check/browser-11226a69-3e8c-4cd4-b92c-056ae7fe0114-task-page.png. The final run also covers existing evidence, rejection, rechecks, settings, view cleanup and narrow-screen flows.
+
+Limits: this reduces transmitted and rendered detail data; the service still reads complete report files and compares findings on demand. Logs remain available in detail views. This is not a measured whole-process memory reduction, a production-size latency benchmark or a live GitHub PR network check. Acceptance editing and full exports deliberately keep complete evidence; local agent permissions remain unchanged. No dependency or new configuration was added.
+
 # Ongoing platform iteration
 
 Objective: continue improving CodeHealth's useful review features, daily usability, low memory usage, and convenient deployment. The overall goal remains active; one verified release does not prove every opportunity has been completed.
+
+## Version 1.18 clear navigation, optional setup and temporary-data release
+
+Finish criteria: retain every existing function with clearer entry points; distinguish local checks, complete builds, review evidence and agent task participation; offer minimal local setup first; optional configuration stays accessible with validation feedback; desktop/short-window navigation remains reachable and mobile users can open and close a named menu; hidden details and inactive list caches are released; real measured memory and current-source acceptance are recorded.
+
+Implementation: navigation is grouped into checks/acceptance, tasks/knowledge and setup/history. The quality page is named "代码审查与证据" to describe its functions. Nonfunctional local-user decoration is removed; navigation scrolls within the sidebar and icon links expose accessible names. The home guide connects existing check, acceptance and task actions. Settings starts with a zero-extra-configuration local check route; complete-check configuration, Sonar service management and GitHub access configuration are folded until needed. Existing settings APIs, token lifetime and validation remain unchanged. Native configuration errors remain in the form and successful saves can be verified from actual state.
+
+Memory changes: navigation aborts inactive list requests, including requirements/knowledge, and drops inactive page data. Closing a modal removes its DOM contents and editing snapshots while preserving stored evidence. A queued close event cannot erase a newly opened modal. Scan polling skips hidden pages and cannot overlap another poll. No new dependency, resident worker or background monitor was added.
+
+Verification: final one-click report outputs/iteration-check/report-e7d28804-fbc7-4317-946b-a60a68f6150e.json passed all 98 Node tests and 10/10 actual browser scenarios against matching source. Added browser checks reject an external Sonar address without replacing settings, save a valid localhost address, confirm closed modal content is empty, confirm inactive list/workspace caches are released, and open/close the mobile text menu. A first cache check ran before hashchange had rendered; the runner now awaits the actual selected page. Direct 390-pixel inspection also found a menu that covered its close control; placing the menu below the topbar fixed it, and button closing is now checked automatically. Optional GitHub configuration was expanded through the real UI and its original form remained present. Desktop and mobile screenshots are in outputs/qa-v1.18.
+
+Measured samples: an independent QA instance with no projects/scans used 45.4–45.8 MB RSS and 6.7–7.3 MB main heap across five readings. After 30 real small-fixture scans, completed workers and five further readings, RSS was 73.4 MB and main heap 10.8 MB. The overview response was 16,385 bytes with 25 compact summaries for 30 records; history pages contained 25 then 5 records, and no full issue lists, logs or source manifests were in overview state. Samples are saved in outputs/qa-v1.18/idle-memory.json and loaded-memory.json. These are representative service-only readings, not a memory ceiling, a before/after reduction claim, browser memory, or full Java/Sonar coverage. Existing production data was not used in the QA instance. See docs/SIMPLE-WORKFLOW.md.
 
 ## Version 1.17 requirements, tasks, knowledge and local agents
 

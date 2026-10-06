@@ -15,7 +15,8 @@ const { request: sonarRequest, importAnalysis } = require('./lib/sonar');
 const { mavenProbeArgs } = require('./lib/environment');
 const { changedLines, filterChanged } = require('./lib/git-changes');
 const { preflight } = require('./lib/preflight');
-const { repairTasks, tasksMarkdown, compareScans } = require('./lib/reports');
+const { repairTasks, repairTaskPage, tasksMarkdown, compareScans } = require('./lib/reports');
+const { reportView } = require('./lib/report-view');
 const { checklist, validateAcceptance, acceptanceStatus, reviewReadiness } = require('./lib/acceptance');
 const { fields: briefFields, validateBrief, briefStatus, briefMarkdown } = require('./lib/coding-brief');
 const { listPulls, reviewPull } = require('./lib/github');
@@ -376,6 +377,20 @@ async function api(req, res, url) {
     const report = await loadReport(url.searchParams.get('id'));
     return json(res, { ...report, issues: identify(report), readiness: reviewReadiness(report) });
   }
+  if (req.method === 'GET' && url.pathname === '/api/report/view') {
+    return json(res, reportView(await loadReport(url.searchParams.get('id'))));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/scan/view') {
+    return json(res, reportView(await scanWithComparison(url.searchParams.get('id'))));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/tasks/page') {
+    const parameters = Object.fromEntries(url.searchParams);
+    if (Object.keys(parameters).some(key => !['id', 'offset'].includes(key))) fail('修复清单只支持报告编号和分页位置', 400);
+    const { offset } = queries.options({ offset: parameters.offset });
+    const scan = await loadReport(parameters.id);
+    if (scan.status !== 'completed') fail('请先完成一次扫描', 400);
+    return json(res, { scanId: scan.id, scan: summarize(scan), ...repairTaskPage({ ...scan, issues: identify(scan) }, offset) });
+  }
   if (req.method === 'GET' && url.pathname === '/api/environment') return json(res, await environment());
   if (req.method === 'GET' && url.pathname === '/api/scan') {
     return json(res, await scanWithComparison(url.searchParams.get('id')));
@@ -656,7 +671,7 @@ async function start() {
         }
         return await api(req, res, url);
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'application/javascript'], '/work.js': ['work.js', 'application/javascript'], '/style.css': ['style.css', 'text/css'] };
+      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'application/javascript'], '/work.js': ['work.js', 'application/javascript'], '/ui.js': ['ui.js', 'application/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (req.method !== 'GET' || !assets[url.pathname]) fail('页面不存在', 404);
       const [file, mime] = assets[url.pathname];
       res.writeHead(200, { 'Content-Type': `${mime}; charset=utf-8` }); res.end(await fs.readFile(path.join(ROOT, 'public', file)));
