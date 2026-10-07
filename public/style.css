@@ -19,6 +19,12 @@ textarea { width:100%; resize:vertical; min-height:90px; padding:12px; border:1p
 
 /* 协作正文按原样换行；长路径与证据在窄屏内折行。 */
 .work-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; background: #f6f8fa; padding: 12px; border-radius: 8px; }
+/* 协作筛选可换行；记录名称、所属项目与交接提示分别成行，避免窄屏挤在一起。 */
+.filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.filters input, .filters select { min-width: 0; max-width: 100%; }
+#work-records td { font-size: 12px; line-height: 1.7; }
+#work-records td small { display: block; color: var(--muted); }
+#work-records td small.red { color: var(--red); }
 
 /* 导航可独立滚动，常用入口分组显示，低高度窗口不会挡住配置入口。 */
 .sidebar{padding-top:22px;z-index:3}.brand,.workspace,.sidebar-foot{flex-shrink:0}.workspace{margin:20px 4px 12px;padding:10px 8px}#navigation{min-height:0;overflow-y:auto;flex:1;scrollbar-width:thin}#navigation .nav-label{margin:14px 14px 6px}#navigation a{padding:10px 14px;margin:3px 0}.local-card{margin:12px 6px;font-size:11px;flex-shrink:0}.local-card p{margin:6px 0}.sidebar-foot{padding:12px 8px}.nav-toggle{display:none}.breadcrumb-row{display:flex;align-items:center;gap:10px}.setup-options{display:grid;grid-template-columns:1fr 1fr;gap:18px}.setup-options article{border:1px solid var(--line);border-radius:8px;padding:18px}.setup-options h3{margin:12px 0 8px}.setup-options p{font-size:12px;line-height:1.8;color:#637283}.setup-section{background:white;border:1px solid var(--line);border-radius:8px;margin-bottom:22px;overflow:hidden}.setup-section>summary{padding:20px 23px;cursor:pointer;font-weight:600;list-style-position:inside}.setup-section[open]>summary{border-bottom:1px solid var(--line)}.panel-body>details{margin-top:16px}.panel-body>details summary{cursor:pointer;font-size:12px}.workflow-guide .text-link{display:inline-block;margin-top:15px}.workflow-guide p{font-size:12px;line-height:1.8}

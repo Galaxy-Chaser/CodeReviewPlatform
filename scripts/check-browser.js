@@ -13,7 +13,7 @@ const scenarios = [
   ['scan', '实际扫描与完成状态'], ['acceptance', '五类验收证据保存'],
   ['download', '报告导出与实际下载'], ['pipeline', '场景失败阻断与复验历史'],
   ['stale', '源码变化阻断旧验收'], ['paging', '大量问题翻页、审查与完整导出'], ['setup', '按需配置与错误保存反馈'],
-  ['work-sync', '多 agent 实际协作、自动同步与编辑保护'], ['release', '关闭详情与离开列表释放缓存'], ['mobile', '窄屏文字导航与报告显示']
+  ['work-sync', '多 agent 实际协作、自动同步与编辑保护'], ['handoff', '需求变化后的真实交接与重新处理'], ['release', '关闭详情与离开列表释放缓存'], ['mobile', '窄屏文字导航与报告显示']
 ];
 
 /** 启动独立端口，返回子进程；启动失败或超时必须报错，不以等待时间当作就绪。 */
@@ -66,6 +66,11 @@ async function runBrowserRegression(options = {}) {
     await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
     child = await startServer(root, path.join(temporary, 'data'), port);
     const read = async route => { const r = await fetch(base + route); assert.equal(r.status, 200); return r.json(); };
+    /** Test participants only write to this isolated local service; no application command is executed. */
+    const write = async (route, payload, token, expected = 200) => {
+      const response = await fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(payload) });
+      const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;
+    };
     const close = async () => { if (await page.locator('#dialog').isVisible()) await page.getByRole('button', { name: '关闭', exact: true }).click(); };
     const nav = async name => {
       await close(); const link = page.locator('#navigation').getByRole('link', { name: new RegExp(name) });
@@ -218,10 +223,6 @@ async function runBrowserRegression(options = {}) {
         },
         'work-sync': async () => {
           /** Independent participants use the real API; the page must notice changes on its own timer. */
-          const write = async (route, payload, token, expected = 200) => {
-            const response = await fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(payload) });
-            const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;
-          };
           await nav('需求与任务');
           await page.getByRole('button', { name: '新增需求', exact: true }).click();
           await page.getByLabel('名称', { exact: true }).fill('协作回归需求');
@@ -275,6 +276,86 @@ async function runBrowserRegression(options = {}) {
             assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
             await page.setViewportSize({ width: 1280, height: 800 });
           } finally { page.off('request', count); }
+        },
+        handoff: async () => {
+          const requirement = (await write('/api/work/save', { kind: 'requirements', record: { projectId, title: '交接更新需求', description: '按当前版本处理交接文档', criteria: '原条件核对正常处理', allowedPaths: 'docs only' } })).row;
+          const task = (await write('/api/work/save', { kind: 'tasks', record: { projectId, requirementId: requirement.id, title: '交接中的任务', description: '处理文档并实际核对交接', criteria: requirement.criteria, requireReport: false } })).row;
+          const agent = await write('/api/work/agents/register', { name: 'Handoff agent', projectIds: [projectId] });
+          const claimed = (await write('/api/agent/task', { id: task.id, expectedVersion: task.version, action: 'claim' }, agent.token)).row;
+          await nav('需求与任务'); await page.getByRole('button', { name: '查看任务列表', exact: true }).click();
+          const row = page.locator('#work-records tr').filter({ hasText: '交接中的任务' }); await row.getByText('Handoff agent', { exact: false }).waitFor();
+          // A separate real browser page edits the requirement while the task page retains its list.
+          const editor = await context.newPage();
+          try {
+            await editor.goto(base + '/#work');
+            await editor.locator(`[data-action="work-detail"][data-id="${requirement.id}"]`).click();
+            await editor.getByRole('button', { name: '编辑记录', exact: true }).click();
+            await editor.getByLabel('验收条件', { exact: true }).fill('新版必须核对异常处理和恢复');
+            await editor.getByLabel('允许改动范围与约束', { exact: true }).fill('仅 docs/handoff，禁止修改业务源码');
+            await editor.getByRole('button', { name: '保存需求', exact: true }).click();
+            await editor.getByRole('button', { name: '新增关联任务', exact: true }).waitFor();
+          } finally { await editor.close(); await page.bringToFront(); }
+          await row.getByText('关联需求已变化 · 需更新任务条件', { exact: true }).waitFor();
+          await row.getByRole('button', { name: '查看记录', exact: true }).click();
+          await page.getByRole('heading', { name: '当前交接与下一步', exact: true }).waitFor();
+          assert.equal(await page.getByRole('button', { name: '人工领取任务', exact: true }).count(), 0);
+          assert.equal(await page.getByRole('button', { name: '提交处理证据', exact: true }).count(), 0);
+          assert.match(await page.locator('#dialog-content').textContent(), /仅 docs\/handoff/);
+          assert.match(await page.locator('#dialog-content').textContent(), /新版必须核对异常处理和恢复/);
+          await write('/api/agent/task', { id: task.id, expectedVersion: claimed.version, action: 'heartbeat' }, agent.token, 409);
+          assert.deepEqual((await read('/api/work/detail?kind=tasks&id=' + task.id)).row, claimed);
+          await page.setViewportSize({ width: 390, height: 844 });
+          assert.equal(await page.evaluate(() => document.querySelector('#dialog').getBoundingClientRect().width <= document.documentElement.clientWidth), true);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+          const picture = `browser-${id}-handoff-stale.png`; await page.screenshot({ path: path.join(path.dirname(output), picture), fullPage: true }); report.images.push(picture);
+          await page.setViewportSize({ width: 1280, height: 800 });
+          await page.getByRole('button', { name: '释放任务', exact: true }).click();
+          await page.getByLabel('审核或操作理由（至少 8 字）', { exact: true }).fill('需求已经变化，先释放再重新核对条件');
+          await page.getByRole('button', { name: '确认保存', exact: true }).click();
+          await page.getByRole('button', { name: '编辑记录', exact: true }).click();
+          await page.getByLabel('任务验收条件', { exact: true }).fill('新版必须核对异常处理和恢复');
+          await page.getByRole('button', { name: '保存任务', exact: true }).click();
+          await page.getByRole('button', { name: '人工领取任务', exact: true }).waitFor();
+          const rebound = (await read('/api/work/context?id=' + task.id));
+          assert.equal(rebound.coordination.requirement.status, 'CURRENT'); assert.equal(rebound.task.requirementVersion, 2);
+          assert.ok(rebound.task.history.some(h => h.action === 'release'));
+          // Hold the real editor read until its dialog is closed and a new unsaved form replaces it.
+          const editUrl = `${base}/api/work/detail?kind=tasks&id=${task.id}`;
+          let releaseRead, markArrived, markFinished;
+          const held = new Promise(resolve => { releaseRead = resolve; }), arrived = new Promise(resolve => { markArrived = resolve; }), finished = new Promise(resolve => { markFinished = resolve; });
+          const delayEdit = async route => {
+            markArrived(); await held;
+            try { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ row: rebound.task }) }); }
+            finally { markFinished(); }
+          };
+          await page.route(editUrl, delayEdit);
+          try {
+            await page.getByRole('button', { name: '编辑记录', exact: true }).click(); await arrived;
+            await close(); await page.locator('[data-action="work-new"][data-kind="tasks"]').click();
+            await page.getByLabel('名称', { exact: true }).fill('新窗口中尚未保存的任务');
+            releaseRead(); await finished;
+            assert.equal(await page.getByLabel('名称', { exact: true }).inputValue(), '新窗口中尚未保存的任务');
+          } finally { releaseRead(); await page.unroute(editUrl, delayEdit); }
+          await close(); await write('/api/agent/task', { id: task.id, expectedVersion: rebound.task.version, action: 'claim' }, agent.token);
+          await row.getByText('Handoff agent', { exact: false }).waitFor();
+          await row.getByRole('button', { name: '查看记录', exact: true }).click();
+          await page.getByRole('heading', { name: '当前交接与下一步', exact: true }).waitFor();
+          assert.match(await page.locator('#dialog-content').textContent(), /任务绑定 v2 \/ 当前 v2/);
+          const active = (await read('/api/work/context?id=' + task.id)).task;
+          const evidence = { summary: '已实际检查新版交接中的正常与异常恢复', tests: '隔离浏览器流程核对版本和显示，不代表业务验证', changedFiles: ['docs/handoff/result.md'] };
+          const submitted = (await write('/api/agent/task', { id: task.id, expectedVersion: active.version, action: 'submit', submission: evidence }, agent.token)).row;
+          assert.equal(submitted.submission.requirementVersion, 2);
+          const done = (await write('/api/work/task', { id: task.id, expectedVersion: submitted.version, action: 'approve', reason: '人工核对隔离流程的版本保存与显示' })).row;
+          const currentRequirement = (await read('/api/work/detail?kind=requirements&id=' + requirement.id)).row;
+          const third = (await write('/api/work/save', { kind: 'requirements', record: { ...currentRequirement, expectedVersion: currentRequirement.version, criteria: '第三版需重新执行全部交接检查' } })).row;
+          const reopened = (await write('/api/work/task', { id: task.id, expectedVersion: done.version, action: 'reopen', reason: '需求再次变化，保留旧证据并重新验证' })).row;
+          await write('/api/work/save', { kind: 'tasks', record: { ...reopened, expectedVersion: reopened.version, criteria: third.criteria } });
+          const oldEvidence = await read('/api/work/context?id=' + task.id);
+          assert.equal(oldEvidence.coordination.requirement.status, 'CURRENT'); assert.equal(oldEvidence.coordination.submissionRequirement.status, 'CHANGED');
+          assert.deepEqual(oldEvidence.task.submission, submitted.submission);
+          await close(); await row.getByRole('button', { name: '查看记录', exact: true }).click();
+          await page.getByRole('heading', { name: '最近提交证据（旧需求，需重新验证）', exact: true }).waitFor();
+          assert.match(await page.locator('#dialog-content').textContent(), /任务绑定 v3 \/ 当前 v3/);
         },
         release: async () => {
           await nav('扫描历史');

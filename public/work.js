@@ -65,7 +65,15 @@ function workPage() {
 
 /** kind 指定记录类型，list 为当前有界页；复用相同展示供初次加载与后台更新。 */
 function workRecords(kind, list) {
-  return panel(`${workNames[kind]}记录`, list.loading ? '<div class="panel-body">正在读取协作记录…</div>' : list.error ? `<div class="panel-body notice red">${e(list.error)}</div>` : !list.total ? '<div class="panel-body">当前没有匹配记录，可新建一条开始。</div>' : `<div class="table-wrap"><table><thead><tr><th>名称 / 项目</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${list.rows.map(r => `<tr><td>${e(r.title)}<small>${e(state.projects.find(p => p.id === r.projectId)?.name || '通用知识')}${r.tags ? ' · ' + r.tags.map(e).join('、') : ''}</small></td><td>${e(workStatuses[r.status])}${kind === 'requirements' ? `<small>当前需求版本完成 ${r.done} / ${r.tasks} 个任务</small>` : kind === 'tasks' ? `<small>${e(r.owner)}${r.leaseExpired ? ' · 领取已过期，可重新领取' : r.expiresAt ? ' · 到期 ' + e(time(r.expiresAt)) : ''}${r.requireReport ? ' · 要求实际扫描验收' : ' · 人工确认，不代表自动质量通过'}</small>` : ''}</td><td>${e(time(r.updatedAt))}</td><td>${button('查看记录', 'work-detail', `data-kind="${kind}" data-id="${r.id}"`, 'small')}</td></tr>`).join('')}</tbody></table></div><div class="panel-foot"><span>共 ${list.total} 条 · 第 ${Math.floor(list.offset / 25) + 1} 页</span><div class="buttons">${button('上一页', 'work-page', `data-offset="${list.offset - 25}" ${list.offset ? '' : 'disabled'}`, 'small')}${button('下一页', 'work-page', `data-offset="${list.offset + 25}" ${list.offset + 25 < list.total ? '' : 'disabled'}`, 'small')}</div></div>`);
+  return panel(`${workNames[kind]}记录`, list.loading ? '<div class="panel-body">正在读取协作记录…</div>' : list.error ? `<div class="panel-body notice red">${e(list.error)}</div>` : !list.total ? '<div class="panel-body">当前没有匹配记录，可新建一条开始。</div>' : `<div class="table-wrap"><table><thead><tr><th>名称 / 项目</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${list.rows.map(r => `<tr><td><span>${e(r.title)}</span><small>${e(state.projects.find(p => p.id === r.projectId)?.name || '通用知识')}${r.tags ? ' · ' + r.tags.map(e).join('、') : ''}</small></td><td>${workProgress(kind, r)}</td><td>${e(time(r.updatedAt))}</td><td>${button('查看记录', 'work-detail', `data-kind="${kind}" data-id="${r.id}"`, 'small')}</td></tr>`).join('')}</tbody></table></div><div class="panel-foot"><span>共 ${list.total} 条 · 第 ${Math.floor(list.offset / 25) + 1} 页</span><div class="buttons">${button('上一页', 'work-page', `data-offset="${list.offset - 25}" ${list.offset ? '' : 'disabled'}`, 'small')}${button('下一页', 'work-page', `data-offset="${list.offset + 25}" ${list.offset + 25 < list.total ? '' : 'disabled'}`, 'small')}</div></div>`);
+}
+
+/** kind/row 为当前页的类别与摘要；把需求变化和领取信息分行显示，方便交接。 */
+function workProgress(kind, row) {
+  const status = e(workStatuses[row.status]);
+  if (kind === 'requirements') return `${status}<small>当前需求版本完成 ${row.done} / ${row.tasks} 个任务</small>`;
+  if (kind !== 'tasks') return status;
+  return `${status}${row.requirementChanged ? '<small class="red">关联需求已变化 · 需更新任务条件</small>' : ''}<small>${e(row.owner)}${row.leaseExpired ? ' · 领取已过期，可重新领取' : row.expiresAt ? ' · 到期 ' + e(time(row.expiresAt)) : ''}</small><small>${row.requireReport ? '要求实际扫描验收' : '人工确认，不代表自动质量通过'}</small>`;
 }
 
 /** signature 固定筛选快照；新请求/导航使旧结果失效，后台失败保留最后成功页。 */
@@ -119,22 +127,50 @@ async function workRequirementOptions(projectId, selected = '') {
   if ($('#work-requirement') !== target || $('#work-record-project').value !== projectId) return;
   const rows = result.rows;
   if (selected && !rows.some(r => r.id === selected)) rows.push((await api('/api/work/detail?kind=requirements&id=' + selected)).row);
+  if ($('#work-requirement') !== target || $('#work-record-project')?.value !== projectId) return;
   target.innerHTML = '<option value="">独立任务</option>' + rows.map(r => `<option value="${r.id}" ${r.id === selected ? 'selected' : ''}>${e(r.title)}</option>`).join('');
 }
-/** 阅读完整记录、相关知识及历史，所有文本转义后显示，不执行 Markdown/HTML。 */
+/** url 指定只读请求，present 仅在响应仍属于当前窗口时执行；取消、替换和超时共用详情规则。 */
+async function workRead(url, present) {
+  const read = beginDetailRead(), timeout = AbortSignal.timeout(10000), signal = AbortSignal.any([read.signal, timeout]);
+  let result;
+  try {
+    result = await api(url, undefined, signal);
+    if (!read.current()) return;
+  } catch (error) { if (!read.current()) return; if (timeout.aborted) throw Error('读取协作详情超时，请重试'); throw error; }
+  finally { if (detailReadController?.signal === read.signal) cancelDetailRead(); }
+  // 窗口准备在有效性检查后同步开始；其后的保存或表单读取错误仍交给调用者展示。
+  return present(result);
+}
+/** kind/id 为待编辑记录；读取期间关闭或替换窗口，不再打开过时编辑表单。 */
+function workEdit(kind, id) {
+  return workRead(`/api/work/detail?kind=${kind}&id=${id}`, result => workForm(kind, result.row));
+}
+/** context 为单次任务快照；范围与条件是协作约定，不当作已执行的验证。 */
+function workHandoff(context) {
+  const c = context.coordination, r = context.requirement;
+  const owner = c.ownership.owner;
+  return `<section class="notice"><h3>当前交接与下一步</h3><p>${e(c.nextStep)}</p>${c.blockers.map(b => `<p class="red">${e(b.message)}</p>`).join('')}<p>${owner ? `领取者：${e(owner.name)} · ${c.ownership.status === 'EXPIRED' ? '领取已过期' : '有效领取'}${c.ownership.expiresAt ? ' · 到期 ' + e(time(c.ownership.expiresAt)) : ' · 人工领取，不自动到期'}` : '尚未领取'} · 可保留 ${c.historyRemaining} 次后续操作</p><small>核对于 ${e(time(c.assessedAt))}。${e(c.limits)}</small></section>${r ? `<h3>当前需求与允许范围</h3><p>${e(r.title)} · 任务绑定 v${context.task.requirementVersion} / 当前 v${r.version}</p><pre class="work-text">允许改动范围：${e(r.allowedPaths)}\n当前需求验收条件：${e(r.criteria)}</pre>` : ''}`;
+}
+
+/** kind/id 指定记录；任务只读取一次上下文，取消或替换后的旧响应不能覆盖新窗口。 */
 async function workDetail(kind, id) {
-  const row = (await api(`/api/work/detail?kind=${kind}&id=${id}`)).row; workFormRow = row; workFormKind = kind;
+  return workRead(kind === 'tasks' ? '/api/work/context?id=' + id : `/api/work/detail?kind=${kind}&id=${id}`, result => {
+  const context = kind === 'tasks' ? result : null, row = context ? context.task : result.row;
+  workFormRow = row; workFormKind = kind;
   const fieldNames = kind === 'requirements' ? [['description', '需求说明'], ['criteria', '验收条件'], ['allowedPaths', '允许改动范围']] : kind === 'tasks' ? [['description', '任务说明'], ['criteria', '验收条件']] : [['symptom', '问题表现'], ['cause', '原因'], ['solution', '处理方法'], ['verification', '验证步骤']];
   let extra = kind === 'knowledge' ? `<p>${e(workStatuses[row.status])} · ${e(row.tags.join('、'))}</p>${row.source?.taskId ? button('查看来源任务', 'work-detail', `data-kind="tasks" data-id="${row.source.taskId}"`, 'small') : ''}` : '';
   if (kind === 'tasks') {
-    const context = await api('/api/work/context?id=' + id);
-    extra = `<p>${e(workStatuses[row.status])} · ${row.requireReport ? '要求实际扫描验收' : '人工确认任务，不代表自动质量通过'}${row.claim ? ' · ' + e(row.claim.actor.name) : ''}</p>${context.requirement ? `<p>关联需求：${e(context.requirement.title)} · 任务绑定 v${row.requirementVersion} / 当前 v${context.requirement.version}</p>` : ''}${row.source ? `<p>来源问题：${e(row.source.rule)} · ${e(row.source.file)}</p>` : ''}${row.submission ? `<h3>最近提交证据</h3><pre class="work-text">${e(row.submission.summary)}\n改动文件：${e(row.submission.changedFiles.join('、'))}\n实际测试：${e(row.submission.tests)}</pre>${row.submission.reportId ? button('打开提交的扫描报告', 'scan-detail', `data-id="${row.submission.reportId}"`) : ''}` : ''}<h3>相关已发布知识</h3>${context.knowledge.length ? context.knowledge.map(k => button(k.title, 'work-detail', `data-kind="knowledge" data-id="${k.id}"`, 'small')).join('') : '<p>暂未匹配到知识，可按问题关键词在知识库查找。</p>'}`;
+    const evidenceStatus = context.coordination.submissionRequirement.status;
+    extra = `<p>${e(workStatuses[row.status])} · ${row.requireReport ? '要求实际扫描验收' : '人工确认任务，不代表自动质量通过'}</p>${workHandoff(context)}${row.source ? `<p>来源问题：${e(row.source.rule)} · ${e(row.source.file)}</p>` : ''}${row.submission ? `<h3>最近提交证据${evidenceStatus === 'CHANGED' ? '（旧需求，需重新验证）' : evidenceStatus === 'UNKNOWN' ? '（未记录需求版本，需核对并重新验证）' : ''}</h3><pre class="work-text">${e(row.submission.summary)}\n改动文件：${e(row.submission.changedFiles.join('、'))}\n实际测试：${e(row.submission.tests)}</pre>${row.submission.reportId ? button('打开提交的扫描报告', 'scan-detail', `data-id="${row.submission.reportId}"`) : ''}` : ''}<h3>相关已发布知识</h3>${context.knowledge.length ? context.knowledge.map(k => button(e(k.title), 'work-detail', `data-kind="knowledge" data-id="${k.id}"`, 'small')).join('') : '<p>暂未匹配到知识，可按问题关键词在知识库查找。</p>'}`;
   }
-  const actions = kind === 'requirements' ? button('新增关联任务', 'work-child-task', `data-id="${id}"`, 'primary') : kind === 'knowledge' ? button(row.status === 'published' ? '撤回发布' : '审核并发布', 'work-publish', `data-id="${id}"`, 'primary') : (['ready', 'in_progress'].includes(row.status) && !activeWorkClaim(row) ? button('人工领取任务', 'work-task-action', `data-task-action="claim" data-id="${id}"`, 'primary') : '') + (row.status === 'in_progress' ? button('释放任务', 'work-task-action', `data-task-action="release" data-id="${id}"`) + (row.claim?.actor.type === 'human' ? button('提交处理证据', 'work-submit', `data-id="${id}"`, 'primary') : '') : '') + (row.status === 'review' ? button('审核通过', 'work-task-action', `data-task-action="approve" data-id="${id}"`, 'primary') + button('退回重做', 'work-task-action', `data-task-action="reject" data-id="${id}"`) : '') + (row.status === 'done' ? button('沉淀为知识草稿', 'work-task-knowledge', `data-id="${id}"`, 'primary') + button('重新打开任务', 'work-task-action', `data-task-action="reopen" data-id="${id}"`) : '') + (['ready', 'blocked'].includes(row.status) ? button(row.status === 'ready' ? '标记阻塞' : '解除阻塞', 'work-task-action', `data-task-action="${row.status === 'ready' ? 'block' : 'unblock'}" data-id="${id}"`) : '');
+  const permitted = context?.coordination.actions || [];
+  const taskButtons = [['claim', '人工领取任务'], ['release', '释放任务'], ['approve', '审核通过'], ['reject', '退回重做'], ['reopen', '重新打开任务'], ['block', '标记阻塞'], ['unblock', '解除阻塞']];
+  const actions = kind === 'requirements' ? button('新增关联任务', 'work-child-task', `data-id="${id}"`, 'primary') : kind === 'knowledge' ? button(row.status === 'published' ? '撤回发布' : '审核并发布', 'work-publish', `data-id="${id}"`, 'primary') : taskButtons.filter(([action]) => permitted.includes(action)).map(([action, label]) => button(label, 'work-task-action', `data-task-action="${action}" data-id="${id}"`, ['claim', 'approve'].includes(action) ? 'primary' : '')).join('') + (permitted.includes('submit') ? button('提交处理证据', 'work-submit', `data-id="${id}"`, 'primary') : '') + (row.status === 'done' && !context.coordination.blockers.length ? button('沉淀为知识草稿', 'work-task-knowledge', `data-id="${id}"`, 'primary') : '');
   const actionNames = { create: '创建记录', edit: '编辑记录', claim: '领取任务', heartbeat: '续期', release: '释放任务', submit: '提交处理证据', approve: '审核通过', reject: '退回重做', block: '标记阻塞', unblock: '解除阻塞', reopen: '重新打开任务', publish: '审核发布', withdraw: '撤回发布' };
-  modal(row.title, `${fieldNames.map(([k, name]) => `<h3>${name}</h3><pre class="work-text">${e(row[k])}</pre>`).join('')}${extra}<div class="buttons">${actions}${kind !== 'tasks' || ['ready', 'blocked'].includes(row.status) ? button('编辑记录', 'work-edit', `data-kind="${kind}" data-id="${id}" ${kind === 'knowledge' && row.status === 'published' ? 'disabled' : ''}`) : ''}</div><details><summary>查看 ${row.history.length} 条处理历史</summary>${row.history.map(h => `<p>${e(time(h.at))} · ${e(h.actor.name)} · ${e(actionNames[h.action] || h.action)}</p><pre class="work-text">${e(workHistoryDetail(h.detail))}</pre>`).join('')}</details>`);
+  modal(e(row.title), `${fieldNames.map(([k, name]) => `<h3>${name}</h3><pre class="work-text">${e(row[k])}</pre>`).join('')}${extra}<div class="buttons">${actions}${kind !== 'tasks' || permitted.includes('edit') ? button('编辑记录', 'work-edit', `data-kind="${kind}" data-id="${id}" ${kind === 'knowledge' && row.status === 'published' ? 'disabled' : ''}`) : ''}</div><details><summary>查看 ${row.history.length} 条处理历史</summary>${row.history.map(h => `<p>${e(time(h.at))} · ${e(h.actor.name)} · ${e(actionNames[h.action] || h.action)}</p><pre class="work-text">${e(workHistoryDetail(h.detail))}</pre>`).join('')}</details>`);
+  });
 }
-function activeWorkClaim(row) { return row.claim && (row.claim.actor.type === 'human' || Date.parse(row.claim.expiresAt) > Date.now()); }
 
 /** 连接页不保留认证缓存；只有新授权响应显示一次凭据。 */
 function agentsPage() {
@@ -150,16 +186,17 @@ document.addEventListener('click', async event => {
     if (a === 'work-page') { workOffset = Number(control.dataset.offset); workReload(); }
     if (a === 'work-new') await workForm(kind);
     if (a === 'work-detail') await workDetail(kind, id);
-    if (a === 'work-edit') await workForm(kind, (await api(`/api/work/detail?kind=${kind}&id=${id}`)).row);
-    if (a === 'work-child-task') { const r = (await api('/api/work/detail?kind=requirements&id=' + id)).row; await workForm('tasks', { projectId: r.projectId, requirementId: id, criteria: r.criteria }); }
-    if (a === 'work-task-knowledge') { const t = (await api('/api/work/detail?kind=tasks&id=' + id)).row; await workForm('knowledge', { projectId: t.projectId, title: '经验：' + t.title, solution: t.submission.summary, verification: t.submission.tests, source: { taskId: id } }); }
+    if (a === 'work-edit') await workEdit(kind, id);
+    if (a === 'work-child-task') await workRead('/api/work/detail?kind=requirements&id=' + id, ({ row: r }) => workForm('tasks', { projectId: r.projectId, requirementId: id, criteria: r.criteria }));
+    if (a === 'work-task-knowledge') await workRead('/api/work/detail?kind=tasks&id=' + id, ({ row: t }) => workForm('knowledge', { projectId: t.projectId, title: '经验：' + t.title, solution: t.submission.summary, verification: t.submission.tests, source: { taskId: id } }));
     if (a === 'work-from-issue') { const r = await api('/api/report?id=' + id); if (!r.projectId) throw Error('仅支持本地项目扫描问题'); const created = await api('/api/work/from-issue', { projectId: r.projectId, source: { reportId: id, trackingId: control.dataset.tracking } }); workReload(); await workDetail('tasks', created.row.id); }
     if (a === 'work-task-action' || a === 'work-publish') {
-      const r = (await api(`/api/work/detail?kind=${a === 'work-publish' ? 'knowledge' : 'tasks'}&id=${id}`)).row;
+      await workRead(`/api/work/detail?kind=${a === 'work-publish' ? 'knowledge' : 'tasks'}&id=${id}`, async ({ row: r }) => {
       if (control.dataset.taskAction === 'claim') { await api('/api/work/task', { id, expectedVersion: r.version, action: 'claim' }); workReload(); await workDetail('tasks', id); }
       else { workFormRow = r; modal(a === 'work-publish' ? '确认知识审核' : '记录任务操作依据', `<form id="work-action-form"><input type="hidden" name="action" value="${e(a === 'work-publish' ? 'publish' : control.dataset.taskAction)}">${workField('reason', '审核或操作理由（至少 8 字）', '', 3, 1000)}<div class="form-actions"><button type="submit" class="button primary">确认保存</button></div></form>`); }
+      });
     }
-    if (a === 'work-submit') { workFormRow = (await api('/api/work/detail?kind=tasks&id=' + id)).row; modal('提交实际处理证据', `<form id="work-submit-form">${workField('summary', '处理摘要（至少 8 字）')}${workField('tests', '实际执行的测试与结果（至少 8 字）')}<div class="field"><label for="work-changedFiles">改动文件（每行一个相对路径）</label><textarea id="work-changedFiles" name="changedFiles" rows="2" maxlength="12000"></textarea></div><div class="field"><label for="work-reportId">扫描报告编号</label><input id="work-reportId" name="reportId" ${workFormRow.requireReport ? 'required' : ''} placeholder="扫描详情中的 UUID"></div><div class="form-actions"><button type="submit" class="button primary">提交人工审核</button></div></form>`); }
+    if (a === 'work-submit') await workRead('/api/work/detail?kind=tasks&id=' + id, ({ row }) => { workFormRow = row; modal('提交实际处理证据', `<form id="work-submit-form">${workField('summary', '处理摘要（至少 8 字）')}${workField('tests', '实际执行的测试与结果（至少 8 字）')}<div class="field"><label for="work-changedFiles">改动文件（每行一个相对路径）</label><textarea id="work-changedFiles" name="changedFiles" rows="2" maxlength="12000"></textarea></div><div class="field"><label for="work-reportId">扫描报告编号</label><input id="work-reportId" name="reportId" ${workFormRow.requireReport ? 'required' : ''} placeholder="扫描详情中的 UUID"></div><div class="form-actions"><button type="submit" class="button primary">提交人工审核</button></div></form>`); });
     if (a === 'work-agent-new') modal('授权本地 agent', `<form id="work-agent-form"><div class="field"><label for="work-agent-name">agent 名称</label><input id="work-agent-name" name="name" maxlength="80" required></div><p>允许参与的项目：</p>${activeProjects().map(p => `<label class="check-row"><span>${e(p.name)}</span><input type="checkbox" name="projects" value="${p.id}"></label>`).join('')}<div class="form-actions"><button type="submit" class="button primary">建立本地连接</button></div></form>`);
     if (a === 'work-agents') { const result = await api('/api/work/agents'); modal('当前本地 agent 连接', result.agents.length ? result.agents.map(a => `<div class="check-row"><span>${e(a.name)}<small>${a.projectIds.map(id => e(state.projects.find(p => p.id === id)?.name)).join('、')}</small></span>${button('撤销连接', 'work-agent-revoke', `data-id="${a.id}"`, 'small')}</div>`).join('') : '<p>当前没有授权连接。</p>'); }
     if (a === 'work-agent-revoke') { await api('/api/work/agents/revoke', { id }); $('#dialog').close(); toast('连接已撤销；未完成任务可由你释放。'); }

@@ -21,6 +21,8 @@ test('scoped tokens include lease expiry and linked task progress without exposi
   doc.tasks[1].version++; doc.knowledge[0].version++;
   assert.equal(token('tasks'), tasks); assert.equal(token('knowledge', before, true), knowledge);
   doc.tasks[0].version++; assert.notEqual(token('requirements'), requirements);
+  const currentTasks = token('tasks'); doc.requirements[0].version++;
+  assert.notEqual(token('tasks'), currentTasks);
   doc.knowledge[0].status = 'published'; assert.notEqual(token('knowledge', before, true), knowledge);
   doc.tasks[0].claim.actor.type = 'human'; assert.equal(token('tasks', deadline), token('tasks', before));
   assert.deepEqual(Object.keys(syncView(syncIndex(doc), 'tasks', ['p'])), ['token']);

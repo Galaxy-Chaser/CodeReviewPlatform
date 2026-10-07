@@ -23,12 +23,22 @@ Test conditions:
 
 ## Next verified increments
 
-1. Better task handoff context: show current requirement changes and ownership before acting; retain human review and stale evidence checks.
+1. Better task handoff context: iteration 1.22 below; retain human review and stale evidence checks.
 2. Optional standard report interchange for established analyzers, with strict input size/path validation and honest tool provenance.
 3. Small review summaries and explicit scope choices; preserve complete exports and original gates.
 4. Measure idle and representative large-workspace polling costs before selecting further memory improvements.
 
 Each increment needs its own finish criteria, boundary tests and verified outcome. This is an ongoing objective; this iteration does not claim all future improvements are complete.
+
+## Iteration 1.22: clear, consistent task handoff
+
+Finish criteria: a single context response supplies the displayed task, current requirement and state-based next actions. Human and agent callers see current ownership, lease expiry, changed requirement versions, archival/history blockers and the next useful step. The task list marks changed requirements and its sync token includes linked requirement versions. Renewing an outdated task is rejected without changing its lease/history; release, return and rework remain possible. Old detail responses cannot reopen a closed dialog or replace a newer editor.
+
+Boundaries: context describes a read-time snapshot and possible actions, not proof of code quality or a promise that a later write will succeed. Every write still checks versions, permissions, requirements and existing report gates. No source execution, new dependency, resident body cache or remote write is added. The current requirement's allowed scope and acceptance conditions are shown; these remain authored constraints, not a filesystem sandbox. Submissions record their original requirement identity/version, retain historical evidence and stay explicitly labeled when tied to older requirements even after task rebinding. Legacy submissions without a recorded version remain readable and are marked as unknown, requiring verification.
+
+Verification: action availability is checked against actual task operations for human, owner agent and other agent across task states, exact expiry and changed requirements. HTTP/CLI checks cover changed-requirement context, scoped sync, rejected renew/submit, release and updated rework. Delayed reads test closing/replacing/retrying actual detail and editor functions. Evidence tests cover requirement updates, rebinding, independent/linked task changes, legacy records and invalid/foreign backup references. A real browser scenario edits a requirement during agent ownership, sees the warning automatically, opens current scope, releases/rebinds the task, preserves a newer unsaved editor during a delayed read, confirms the old-evidence warning after rebinding, and checks a narrow layout. Final full acceptance, independent review and portable-package checks remain required.
+
+Verified outcome (2026-10-07): 128 automated tests and all 13 real Edge browser flows passed together, with matching source evidence in `outputs/iteration-check/report-e3756d8a-1e8f-44a6-8986-b2f6e1f55960.json`. Desktop and 390px handoff screenshots were inspected. Independent Standards and Spec reviews found no remaining issues after the evidence-version and delayed-editor fixes. Runtime dependencies are unchanged. This proves the recorded platform checks, not a real Java/Maven/Sonar build or every project requirement.
 
 ## GitHub reference research (2026-10-07)
 
