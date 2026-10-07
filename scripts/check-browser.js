@@ -13,7 +13,7 @@ const scenarios = [
   ['scan', '实际扫描与完成状态'], ['acceptance', '五类验收证据保存'],
   ['download', '报告导出与实际下载'], ['pipeline', '场景失败阻断与复验历史'],
   ['stale', '源码变化阻断旧验收'], ['paging', '大量问题翻页、审查与完整导出'], ['setup', '按需配置与错误保存反馈'],
-  ['release', '关闭详情与离开列表释放缓存'], ['mobile', '窄屏文字导航与报告显示']
+  ['work-sync', '多 agent 实际协作、自动同步与编辑保护'], ['release', '关闭详情与离开列表释放缓存'], ['mobile', '窄屏文字导航与报告显示']
 ];
 
 /** 启动独立端口，返回子进程；启动失败或超时必须报错，不以等待时间当作就绪。 */
@@ -216,6 +216,66 @@ async function runBrowserRegression(options = {}) {
           await page.waitForFunction(() => !document.querySelector('#full-setup').open);
           assert.equal((await read('/api/state')).settings.sonarUrl, 'http://localhost:9000');
         },
+        'work-sync': async () => {
+          /** Independent participants use the real API; the page must notice changes on its own timer. */
+          const write = async (route, payload, token, expected = 200) => {
+            const response = await fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(payload) });
+            const result = await response.json(); assert.equal(response.status, expected, JSON.stringify(result)); return result;
+          };
+          await nav('需求与任务');
+          await page.getByRole('button', { name: '新增需求', exact: true }).click();
+          await page.getByLabel('名称', { exact: true }).fill('协作回归需求');
+          await page.getByLabel('需求说明', { exact: true }).fill('两个本地 agent 协作完成一份说明');
+          await page.getByLabel('验收条件', { exact: true }).fill('页面及时显示真实领取和提交，人工审核');
+          await page.getByLabel('允许改动范围与约束', { exact: true }).fill('仅 docs，不改动业务源码');
+          await page.getByRole('button', { name: '保存需求', exact: true }).click();
+          await page.getByRole('button', { name: '新增关联任务', exact: true }).click();
+          await page.getByLabel('名称', { exact: true }).fill('协作回归文档任务');
+          await page.getByLabel('任务说明', { exact: true }).fill('编写说明并按真实记录提交证据');
+          await page.getByLabel('完成前要求实际扫描验收通过', { exact: true }).uncheck();
+          await page.getByRole('button', { name: '保存任务', exact: true }).click();
+          await page.getByRole('button', { name: '人工领取任务', exact: true }).waitFor(); await close();
+          await page.getByRole('button', { name: '查看任务列表', exact: true }).click();
+          await page.locator('#work-records tr').filter({ hasText: '协作回归文档任务' }).waitFor();
+          const task = (await read('/api/work/list?kind=tasks')).rows.find(t => t.title === '协作回归文档任务'); assert.ok(task);
+          const a = await write('/api/work/agents/register', { name: 'Sync agent A', projectIds: [projectId] });
+          const b = await write('/api/work/agents/register', { name: 'Sync agent B', projectIds: [projectId] });
+          let pageReads = 0; const count = req => { if (new URL(req.url()).pathname === '/api/work/list') pageReads++; }; page.on('request', count);
+          try {
+            await page.waitForResponse(r => new URL(r.url()).pathname === '/api/work/sync');
+            assert.equal(pageReads, 0, 'Unchanged sync must not reload the list');
+            await page.getByLabel('搜索需求任务与知识', { exact: true }).fill('尚未执行的搜索草稿');
+            await page.getByRole('button', { name: '新增任务', exact: true }).click();
+            await page.getByLabel('名称', { exact: true }).fill('正在编辑的任务草稿');
+            const claimed = (await write('/api/agent/task', { id: task.id, expectedVersion: task.version, action: 'claim' }, a.token)).row;
+            await write('/api/agent/task', { id: task.id, expectedVersion: claimed.version, action: 'claim' }, b.token, 409);
+            await page.waitForFunction(() => document.querySelector('#work-records').textContent.includes('Sync agent A'));
+            assert.equal(await page.getByLabel('名称', { exact: true }).inputValue(), '正在编辑的任务草稿');
+            assert.equal(await page.getByLabel('搜索需求任务与知识', { exact: true }).inputValue(), '尚未执行的搜索草稿');
+            await close(); await page.locator('#work-records [data-action="work-detail"]').click();
+            const submitted = (await write('/api/agent/task', { id: task.id, expectedVersion: claimed.version, action: 'submit', submission: { summary: '实际完成代表性说明并核对处理流程', tests: '此回归核对协作流程，未声称业务测试已完成', changedFiles: ['docs/example.md'] } }, a.token)).row;
+            await page.waitForFunction(() => document.querySelector('#work-records').textContent.includes('待人工审核'));
+            assert.equal(await page.locator('#dialog').isVisible(), true); await close();
+            await page.locator('#work-records [data-action="work-detail"]').click();
+            await page.getByRole('button', { name: '审核通过', exact: true }).click();
+            await page.getByLabel('审核或操作理由（至少 8 字）', { exact: true }).fill('实际核对代表性协作证据，人工确认流程');
+            await page.getByRole('button', { name: '确认保存', exact: true }).click();
+            await page.getByRole('button', { name: '沉淀为知识草稿', exact: true }).waitFor();
+            assert.equal((await read('/api/work/detail?kind=tasks&id=' + submitted.id)).row.status, 'done');
+            await page.getByRole('button', { name: '沉淀为知识草稿', exact: true }).click();
+            await page.getByLabel('问题表现', { exact: true }).fill('协作页面需要及时显示参与者状态');
+            await page.getByLabel('原因', { exact: true }).fill('多人分别领取与提交，需要查看最新状态');
+            await page.getByRole('button', { name: '保存草稿', exact: true }).click();
+            await page.getByRole('button', { name: '审核并发布', exact: true }).waitFor(); await close();
+            await nav('问题知识库'); await page.locator('#work-records').getByText('待审核草稿', { exact: true }).waitFor();
+            const draft = (await read('/api/work/list?kind=knowledge')).rows[0];
+            await write('/api/work/knowledge/publish', { id: draft.id, expectedVersion: draft.version, publish: true, reason: '人工核对来源与代表性处理证据后发布' });
+            await page.locator('#work-records').getByText('已发布', { exact: true }).waitFor();
+            await page.setViewportSize({ width: 390, height: 844 });
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+            await page.setViewportSize({ width: 1280, height: 800 });
+          } finally { page.off('request', count); }
+        },
         release: async () => {
           await nav('扫描历史');
           await page.locator(`[data-action="scan-detail"][data-id="${scanId}"]`).click();
@@ -225,9 +285,9 @@ async function runBrowserRegression(options = {}) {
           await nav('环境设置');
           assert.equal(await page.evaluate(() => Object.keys(listData).length), 0);
           assert.equal(await page.evaluate(() => Object.keys(listRequests).length), 0);
-          await nav('需求与任务'); await page.getByRole('heading', { name: '需求记录', exact: true }).waitFor();
+          await nav('需求与任务'); await page.getByRole('heading', { name: /^(需求|任务)记录$/ }).waitFor();
           await nav('环境设置');
-          assert.equal(await page.evaluate(() => workData === null && workController === null), true);
+          assert.equal(await page.evaluate(() => workData === null && workController === null && workSyncController === null && workSyncTimer === null), true);
         },
         mobile: async () => {
           await close(); await page.setViewportSize({ width: 390, height: 844 }); await nav('验收流水线');

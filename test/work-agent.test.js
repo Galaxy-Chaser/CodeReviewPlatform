@@ -30,6 +30,16 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
   const outsider = (await create('tasks', { projectId: other.id, title: '其他项目任务', description: '其他项目的独立任务说明', criteria: '不能被未授权 agent 读取或修改', requireReport: false })).row;
   const a = await call('/api/work/agents/register', { name: 'CLI fixture agent', projectIds: [p.id] });
   const b = await call('/api/work/agents/register', { name: 'second fixture agent', projectIds: [p.id] });
+  const sync = async (kind = 'tasks', token = a.token) => (await call('/api/agent/sync?kind=' + kind, null, token)).token;
+  const initialToken = await sync(); assert.match(initialToken, /^[a-f0-9]{64}$/);
+  assert.equal((await call('/api/agent/list', null, a.token)).token, initialToken);
+  assert.equal(await sync(), initialToken);
+  await call('/api/agent/sync?projectId=' + other.id, null, a.token, 403);
+  await call('/api/agent/sync?kind=requirements', null, a.token, 403);
+  await call('/api/agent/sync?offset=0', null, a.token, 400);
+  await call('/api/work/sync?kind=invalid', null, null, 403);
+  await call('/api/work/task', { id: outsider.id, expectedVersion: outsider.version, action: 'claim' });
+  assert.equal(await sync(), initialToken);
   await call('/api/agent/context?id=' + task.id, null, null, 401);
   await call('/api/agent/context?id=' + outsider.id, null, a.token, 403);
   await call('/api/work/task', { id: task.id, expectedVersion: task.version, action: 'claim' }, a.token, 403);
@@ -41,9 +51,14 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
     const code = await new Promise((r, reject) => { proc.on('error', reject); proc.on('close', r); }); assert.equal(code, expected, stderr); return expected ? stderr : JSON.parse(stdout);
   }
   assert.equal((await cli(['list'])).rows.length, 1); assert.equal((await cli(['context', task.id])).requirement.id, req.id);
+  assert.equal((await cli(['sync', '--project', p.id, '--kind', 'tasks'])).token, initialToken);
+  await cli(['sync', '--status', 'ready'], 1);
   assert.equal((await cli(['list', '--project', p.id, '--status', 'ready', '--offset', '0'])).total, 1);
   const claimed = (await cli(['claim', task.id])).row; assert.equal(claimed.claim.actor.id, a.agent.id);
+  const claimedToken = await sync(); assert.notEqual(claimedToken, initialToken);
+  assert.equal(await sync('tasks', b.token), claimedToken);
   await call('/api/agent/task', { id: task.id, expectedVersion: claimed.version, action: 'claim' }, b.token, 409);
+  assert.equal(await sync(), claimedToken);
   const renewed = (await cli(['heartbeat', task.id])).row;
   const evidenceFile = path.join(root, 'evidence.json'); await fs.writeFile(evidenceFile, JSON.stringify({ summary: '完成异常处置说明并核对恢复步骤', tests: '实际执行代表性正常和异常用例，文档说明与结果一致', changedFiles: ['docs/recovery.md'] }));
   const submitted = (await cli(['submit', task.id, '--file', evidenceFile])).row; assert.equal(submitted.status, 'review'); assert.ok(submitted.version > renewed.version);
@@ -53,9 +68,11 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
   assert.equal(done.status, 'done'); assert.equal((await call('/api/work/list?kind=requirements')).rows.find(r => r.id === req.id).done, 1);
   const draftFile = path.join(root, 'draft.json'); await fs.writeFile(draftFile, JSON.stringify({ projectId: p.id, title: '异常处理说明经验', symptom: '异常场景缺少操作与恢复说明', cause: '原文档未记录边界和失败结果', solution: '补充按实际情况验证过的操作步骤', verification: '实际复验异常并检查数据保留情况', tags: ['异常', '文档'], source: { taskId: task.id } }));
   const draft = (await cli(['knowledge', '--file', draftFile])).row;
+  const knowledgeToken = await sync('knowledge');
   assert.equal((await call('/api/agent/list?kind=knowledge', null, a.token)).total, 0);
   await call('/api/agent/knowledge/publish', { id: draft.id, expectedVersion: draft.version, publish: true, reason: 'agent 不能发布未经人工审核的知识' }, a.token, 403);
   await call('/api/work/knowledge/publish', { id: draft.id, expectedVersion: draft.version, publish: true, reason: '人工核对来源任务与复用说明后发布' });
+  assert.notEqual(await sync('knowledge'), knowledgeToken);
   assert.equal((await cli(['context', task.id])).knowledge[0].id, draft.id);
   assert.equal((await cli(['knowledge-list', '--search', '异常'])).total, 1);
   assert.equal((await call('/api/work/list?kind=knowledge&search=' + encodeURIComponent('异常'))).total, 1);
@@ -81,6 +98,7 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
   await fs.writeFile(path.join(source, 'A.java'), 'class A {}');
   assert.equal((await call('/api/work/task', { id: repair.id, expectedVersion: revised.version, action: 'approve', reason: '核对最新本地扫描、当前源码和代表性人工验收记录后通过' })).row.status, 'done');
   await call('/api/work/agents/revoke', { id: b.agent.id }); await call('/api/agent/list', null, b.token, 401);
+  await call('/api/agent/sync', null, b.token, 401);
   const saved = await fs.readFile(path.join(data, 'work/workspace.json'), 'utf8'); assert.ok(!saved.includes(a.token)); assert.ok(!saved.includes(b.token));
   const backup = await call('/api/backup', {}, null, 201), restored = path.join(root, 'restored'); await restoreBackup(path.join(data, 'backups', backup.file), restored);
   assert.equal(await fs.readFile(path.join(restored, 'work/workspace.json'), 'utf8'), saved);

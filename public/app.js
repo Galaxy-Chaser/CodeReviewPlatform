@@ -115,7 +115,7 @@ function ensurePolling() {
     if (document.hidden || pollingBusy) return;
     pollingBusy = true;
     try {
-      await refresh(page !== 'settings' && page !== 'quality' && !$('#dialog').open);
+      await refresh(!['settings', 'quality', 'work', 'knowledge'].includes(page) && !$('#dialog').open);
       if (viewedScanId && $('#dialog').open) await scanDetail(viewedScanId, true);
       if (viewedPipelineId && $('#dialog').open) await pipelineReportModal(viewedPipelineId, !state.active, true);
       if (!state.active) { clearInterval(polling); polling = null; toast('扫描已结束，请查看扫描历史。'); }

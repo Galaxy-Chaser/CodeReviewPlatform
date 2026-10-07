@@ -1,10 +1,53 @@
 const workNames = { requirements: '需求', tasks: '任务', knowledge: '知识' };
 const workStatuses = { ready: '待领取', in_progress: '处理中', review: '待人工审核', done: '已审核完成', blocked: '暂时阻塞', draft: '待审核草稿', published: '已发布', open: '尚未完成', fulfilled: '关联任务已确认' };
 let workKind = 'requirements', workProject = '', workStatus = '', workSearch = '', workOffset = 0, workData, workSequence = 0, workFormRow, workFormKind;
-let workController;
+let workController, workSyncController, workSyncTimer;
+let workSyncStatus = '自动同步已开启 · 每 5 秒检查变化';
+
+/** 仅替换记录区域，自动同步不会改动筛选框、正在输入的文字或编辑窗口。 */
+function workPaint(records = true) {
+  const target = $('#work-records');
+  if (records && target && workData) target.innerHTML = workRecords(page === 'knowledge' ? 'knowledge' : workKind, workData);
+  const status = $('#work-sync-status'); if (status) status.textContent = workSyncStatus;
+}
+
+/** 离开协作页释放定时器和未完成请求；旧响应即使忽略中止也不能发布。 */
+function stopWorkSync() {
+  clearInterval(workSyncTimer); workSyncTimer = null;
+  workSyncController?.abort(); workSyncController = null;
+  workController?.abort(); workController = null; workSequence++;
+}
+
+/** 使用当前页面的项目与类别，单次只读取一个变化标记；隐藏页面不发请求。 */
+async function pollWorkSync() {
+  if (document.hidden || !['work', 'knowledge'].includes(page) || workSyncController || workController || !workData?.token) return;
+  const controller = new AbortController(), signature = workData.signature, sequence = workSequence;
+  workSyncController = controller;
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  const current = () => workSyncController === controller && sequence === workSequence && workData?.signature === signature && !document.hidden && ['work', 'knowledge'].includes(page);
+  try {
+    const kind = page === 'knowledge' ? 'knowledge' : workKind;
+    const result = await api('/api/work/sync?' + new URLSearchParams({ kind, projectId: workProject }), undefined, controller.signal);
+    if (!current() || controller.signal.aborted) return;
+    clearTimeout(timeout);
+    workSyncStatus = '自动同步正常 · 每 5 秒检查变化';
+    if (result.token !== workData.token) await loadWork(signature, kind);
+    else workPaint(false);
+  } catch (error) {
+    if (!current()) return;
+    workSyncStatus = '同步暂时中断 · 自动重试，也可刷新列表'; workPaint(false);
+  } finally { clearTimeout(timeout); if (workSyncController === controller) workSyncController = null; }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { workSyncController?.abort(); workController?.abort(); }
+  else if (['work', 'knowledge'].includes(page) && !workData?.token) workReload();
+  else void pollWorkSync();
+});
 
 /** 需求全文按页读取；请求过期后不能覆盖新筛选，也不进入平台首页状态。 */
 function workPage() {
+  if (!workSyncTimer) workSyncTimer = setInterval(() => { void pollWorkSync(); }, 5000);
   const kind = page === 'knowledge' ? 'knowledge' : workKind;
   // 页面切换时清除不属于当前记录类型的状态，防止把任务状态用于知识筛选。
   const allowedStatuses = kind === 'tasks' ? ['ready', 'in_progress', 'review', 'done', 'blocked'] : kind === 'knowledge' ? ['draft', 'published'] : [];
@@ -17,20 +60,36 @@ function workPage() {
   return heading(page === 'knowledge' ? '问题知识库' : '需求与任务', page === 'knowledge' ? '记录问题、原因、处理与实际验证，审核后供人和本地 agent 复用。' : '连接需求、处理任务、提交证据与人工审核。完成任务不等于项目自动验收通过。', button(`新增${workNames[kind]}`, 'work-new', `data-kind="${kind}"`, 'primary')) +
     (page === 'work' ? `<div class="buttons">${['requirements', 'tasks'].map(k => button(`查看${workNames[k]}列表`, 'work-kind', `data-kind="${k}"`, workKind === k ? 'primary' : '')).join('')}</div>` : '') +
     `<div class="filters"><select id="work-project" aria-label="协作项目筛选"><option value="">全部项目</option>${state.projects.map(p => `<option value="${p.id}" ${p.id === workProject ? 'selected' : ''}>${e(p.name)}${p.archivedAt ? '（已归档）' : ''}</option>`).join('')}</select><select id="work-status" aria-label="协作状态筛选"><option value="">全部状态</option>${(kind === 'tasks' ? ['ready', 'in_progress', 'review', 'done', 'blocked'] : kind === 'knowledge' ? ['draft', 'published'] : []).map(s => `<option value="${s}" ${s === workStatus ? 'selected' : ''}>${workStatuses[s]}</option>`).join('')}</select><input id="work-search" aria-label="搜索需求任务与知识" maxlength="200" value="${e(workSearch)}" placeholder="名称、问题或标签">${button('搜索', 'work-search')}${button('刷新列表', 'work-refresh')}</div>` +
-    panel(`${workNames[kind]}记录`, list.loading ? '<div class="panel-body">正在读取协作记录…</div>' : list.error ? `<div class="panel-body notice red">${e(list.error)}</div>` : !list.total ? '<div class="panel-body">当前没有匹配记录，可新建一条开始。</div>' : `<div class="table-wrap"><table><thead><tr><th>名称 / 项目</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${list.rows.map(r => `<tr><td>${e(r.title)}<small>${e(state.projects.find(p => p.id === r.projectId)?.name || '通用知识')}${r.tags ? ' · ' + r.tags.map(e).join('、') : ''}</small></td><td>${e(workStatuses[r.status])}${kind === 'requirements' ? `<small>当前需求版本完成 ${r.done} / ${r.tasks} 个任务</small>` : kind === 'tasks' ? `<small>${e(r.owner)}${r.leaseExpired ? ' · 领取已过期，可重新领取' : r.expiresAt ? ' · 到期 ' + e(time(r.expiresAt)) : ''}${r.requireReport ? ' · 要求实际扫描验收' : ' · 人工确认，不代表自动质量通过'}</small>` : ''}</td><td>${e(time(r.updatedAt))}</td><td>${button('查看记录', 'work-detail', `data-kind="${kind}" data-id="${r.id}"`, 'small')}</td></tr>`).join('')}</tbody></table></div><div class="panel-foot"><span>共 ${list.total} 条 · 第 ${Math.floor(list.offset / 25) + 1} 页</span><div class="buttons">${button('上一页', 'work-page', `data-offset="${list.offset - 25}" ${list.offset ? '' : 'disabled'}`, 'small')}${button('下一页', 'work-page', `data-offset="${list.offset + 25}" ${list.offset + 25 < list.total ? '' : 'disabled'}`, 'small')}</div></div>`);
+    `<p id="work-sync-status" class="subtle" role="status">${e(workSyncStatus)}</p><div id="work-records">${workRecords(kind, list)}</div>`;
 }
+
+/** kind 指定记录类型，list 为当前有界页；复用相同展示供初次加载与后台更新。 */
+function workRecords(kind, list) {
+  return panel(`${workNames[kind]}记录`, list.loading ? '<div class="panel-body">正在读取协作记录…</div>' : list.error ? `<div class="panel-body notice red">${e(list.error)}</div>` : !list.total ? '<div class="panel-body">当前没有匹配记录，可新建一条开始。</div>' : `<div class="table-wrap"><table><thead><tr><th>名称 / 项目</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${list.rows.map(r => `<tr><td>${e(r.title)}<small>${e(state.projects.find(p => p.id === r.projectId)?.name || '通用知识')}${r.tags ? ' · ' + r.tags.map(e).join('、') : ''}</small></td><td>${e(workStatuses[r.status])}${kind === 'requirements' ? `<small>当前需求版本完成 ${r.done} / ${r.tasks} 个任务</small>` : kind === 'tasks' ? `<small>${e(r.owner)}${r.leaseExpired ? ' · 领取已过期，可重新领取' : r.expiresAt ? ' · 到期 ' + e(time(r.expiresAt)) : ''}${r.requireReport ? ' · 要求实际扫描验收' : ' · 人工确认，不代表自动质量通过'}</small>` : ''}</td><td>${e(time(r.updatedAt))}</td><td>${button('查看记录', 'work-detail', `data-kind="${kind}" data-id="${r.id}"`, 'small')}</td></tr>`).join('')}</tbody></table></div><div class="panel-foot"><span>共 ${list.total} 条 · 第 ${Math.floor(list.offset / 25) + 1} 页</span><div class="buttons">${button('上一页', 'work-page', `data-offset="${list.offset - 25}" ${list.offset ? '' : 'disabled'}`, 'small')}${button('下一页', 'work-page', `data-offset="${list.offset + 25}" ${list.offset + 25 < list.total ? '' : 'disabled'}`, 'small')}</div></div>`);
+}
+
+/** signature 固定筛选快照；新请求/导航使旧结果失效，后台失败保留最后成功页。 */
 async function loadWork(signature, kind) {
+  if (document.hidden) return;
   workController?.abort(); const controller = new AbortController(); workController = controller;
   const sequence = ++workSequence;
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 10000);
   try {
     const query = new URLSearchParams({ kind, projectId: workProject, status: workStatus, search: workSearch, offset: workOffset });
     const result = await api('/api/work/list?' + query, undefined, controller.signal);
-    if (workSequence !== sequence || workData?.signature !== signature) return;
-    workData = { ...result, signature };
-  } catch (error) { if (workSequence !== sequence || workData?.signature !== signature) return; workData = { signature, error: error.message }; }
-  if (['work', 'knowledge'].includes(page)) render();
+    if (document.hidden || controller.signal.aborted || workSequence !== sequence || workData?.signature !== signature) return;
+    workOffset = result.offset;
+    const currentSignature = JSON.stringify([page, kind, workProject, workStatus, workSearch, workOffset]);
+    workData = { ...result, signature: currentSignature }; workSyncStatus = '自动同步正常 · 每 5 秒检查变化';
+  } catch (error) {
+    if (document.hidden || (controller.signal.aborted && !timedOut) || workSequence !== sequence || workData?.signature !== signature) return;
+    if (workData.token) workSyncStatus = '同步暂时中断 · 自动重试，也可刷新列表';
+    else workData = { signature, error: timedOut ? '读取协作记录超时，请刷新列表重试' : error.message };
+  } finally { clearTimeout(timeout); if (workController === controller) workController = null; }
+  if (['work', 'knowledge'].includes(page)) workPaint();
 }
-function workReload() { workData = null; if (['work', 'knowledge'].includes(page)) render(); }
+function workReload() { workSyncController?.abort(); workSyncController = null; workData = null; if (['work', 'knowledge'].includes(page)) render(); }
 function workField(key, label, value = '', rows = 3, max = 3000) { return `<div class="field"><label for="work-${key}">${e(label)}</label><textarea id="work-${key}" name="${key}" rows="${rows}" maxlength="${max}" required>${e(value)}</textarea></div>`; }
 
 /** 将操作快照转成可读说明；完整原始证据仍保存在协作记录中。 */
