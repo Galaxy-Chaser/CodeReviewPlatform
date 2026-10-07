@@ -26,7 +26,7 @@ test('repair pages match complete exports without missing or repeated findings, 
   assert.deepEqual(pages.flatMap(page => page.tasks), all);
   assert.equal(new Set(pages.flatMap(page => page.tasks.map(task => task.trackingId))).size, 62);
   assert.equal(pages[2].tasks[0].number, 51); assert.equal(pages[2].tasks[11].number, 62);
-  assert.equal(repairTaskPage(scan, 100).tasks.length, 0);
+  assert.equal(repairTaskPage(scan, 100).tasks.length, 12); assert.equal(repairTaskPage(scan, 100).offset, 50);
   assert.equal(repairTaskPage({ issues: [] }).total, 0);
   for (const offset of [-1, 0.5, NaN, 10000001]) assert.throws(() => repairTaskPage(scan, offset));
   assert.equal(JSON.stringify(scan), before);
@@ -37,9 +37,10 @@ test('PR detail requests only display evidence and the selected repair page', as
   const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
   const functions = source.slice(source.indexOf('function issueLine('), source.indexOf('function time(')) +
     source.slice(source.indexOf('async function githubDetail('), source.indexOf('function modal(')) +
-    source.slice(source.indexOf('function repairTaskList('), source.indexOf('/** Load only 25'));
+    source.slice(source.indexOf('function reviewSummaryPanel('), source.indexOf('/** Load only 25'));
   const requests = [], rendered = [];
   const context = vm.createContext({
+    URLSearchParams, reviewNames: { open: '待审查', confirmed: '已确认', fixing: '处理中', dismissed: '已排除' },
     beginDetailRead: () => ({ current: () => true }),
     api: async url => {
       requests.push(url);

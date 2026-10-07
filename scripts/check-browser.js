@@ -176,6 +176,7 @@ async function runBrowserRegression(options = {}) {
         assert.ok(reportId, '大量问题扫描没有完成');
         const view = await read('/api/scan/view?id=' + reportId);
         assert.equal(view.issueCount, 62); assert.equal(view.issues, undefined); assert.equal(view.sourceSnapshot.files, undefined);
+        assert.equal(view.reviewSummary.total, 62); assert.equal(view.reviewSummary.risk.high, 62);
         await nav('扫描历史'); await page.locator(`[data-action="scan-detail"][data-id="${reportId}"]`).click();
         await page.getByRole('button', { name: '修复任务清单', exact: true }).click();
         for (const [count, range] of [[25, '1–25'], [25, '26–50'], [12, '51–62']]) {
@@ -205,6 +206,57 @@ async function runBrowserRegression(options = {}) {
         await page.locator('#dialog .repair-task').nth(2).getByRole('button', { name: '审查问题', exact: true }).click();
         await page.getByRole('button', { name: '返回修复清单', exact: true }).click();
         await page.getByText('显示第 26–50 条，共 62 条', { exact: true }).waitFor();
+        // 筛选只改变显示；取消与保存保留选择，移走最后匹配项仍显示完整报告和失败门禁。
+        let releaseFilter;
+        const filterGate = new Promise(resolve => { releaseFilter = resolve; });
+        const delayedFilter = async route => { await filterGate; await route.continue(); };
+        await page.route('**/api/tasks/page?**', delayedFilter);
+        try {
+          const requested = page.waitForRequest(request => new URL(request.url()).searchParams.get('risk') === 'high');
+          await page.getByLabel('风险范围', { exact: true }).selectOption('high'); await requested;
+          assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isDisabled(), true);
+          assert.equal(await page.locator('#dialog .repair-task').first().getByRole('button', { name: '审查问题', exact: true }).isDisabled(), true);
+          releaseFilter();
+          await page.getByText('筛选匹配 62 条，报告全部 62 条；条目编号沿用原报告。', { exact: true }).waitFor();
+          assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isEnabled(), true);
+        } finally { releaseFilter(); await page.unroute('**/api/tasks/page?**', delayedFilter); }
+        await page.getByLabel('审查状态筛选', { exact: true }).selectOption('confirmed');
+        await page.getByText('显示第 1–1 条，共 1 条', { exact: true }).waitFor();
+        assert.equal(await page.locator('#dialog .repair-task').count(), 1);
+        assert.match(await page.locator('#dialog .repair-task .task-heading strong').textContent(), /^27\. /);
+        await page.getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByRole('button', { name: '返回修复清单', exact: true }).click();
+        await page.getByText('显示第 1–1 条，共 1 条', { exact: true }).waitFor();
+        assert.equal(await page.getByLabel('风险范围', { exact: true }).inputValue(), 'high');
+        assert.equal(await page.getByLabel('审查状态筛选', { exact: true }).inputValue(), 'confirmed');
+        await page.getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByLabel('审查状态', { exact: true }).selectOption('fixing');
+        await page.getByLabel('判断依据（8 到 2000 字）', { exact: true }).fill('连续审查第二个问题，确认依据保存并回到同一页。');
+        await page.getByRole('button', { name: '保存审查', exact: true }).click();
+        await page.getByText('此筛选没有匹配问题；完整发现与原门禁仍保留。', { exact: true }).waitFor();
+        assert.equal(await page.getByLabel('审查状态筛选', { exact: true }).inputValue(), 'confirmed');
+        await page.getByText('保存报告全部发现：62 条 · 涉及 1 个文件名', { exact: true }).waitFor();
+        await page.locator('#dialog .badge').filter({ hasText: '未通过' }).waitFor();
+        await page.getByLabel('风险范围', { exact: true }).selectOption('medium');
+        await page.locator('#repair-filters[data-risk="medium"]').waitFor();
+        assert.equal(await page.locator('#dialog .repair-task').count(), 0);
+        await page.getByLabel('风险范围', { exact: true }).selectOption('all');
+        await page.locator('#repair-filters[data-risk="all"]').waitFor();
+        await page.getByLabel('审查状态筛选', { exact: true }).selectOption('all');
+        await page.getByText('显示第 1–25 条，共 62 条', { exact: true }).waitFor();
+        await page.getByLabel('审查状态筛选', { exact: true }).selectOption('fixing');
+        await page.getByText('显示第 1–1 条，共 1 条', { exact: true }).waitFor();
+        await page.getByRole('button', { name: '审查问题', exact: true }).click();
+        await page.getByLabel('审查状态', { exact: true }).selectOption('confirmed');
+        await page.getByRole('button', { name: '保存审查', exact: true }).click();
+        await page.getByText('此筛选没有匹配问题；完整发现与原门禁仍保留。', { exact: true }).waitFor();
+        await page.getByLabel('审查状态筛选', { exact: true }).selectOption('confirmed');
+        await page.getByText('显示第 1–1 条，共 1 条', { exact: true }).waitFor();
+        await page.setViewportSize({ width: 390, height: 844 });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.querySelector('#dialog').scrollWidth <= document.querySelector('#dialog').clientWidth), true);
+        const focusImage = `browser-${id}-focused-mobile.png`;
+        await page.screenshot({ path: path.join(path.dirname(output), focusImage) }); report.images.push(focusImage);
+        await page.setViewportSize({ width: 1280, height: 800 });
         const full = await read('/api/report?id=' + reportId);
         assert.equal(full.issues.length, 62); assert.ok(full.issues.some(issue => issue.review?.reason.includes('第二页')));
         assert.equal(full.issues.filter(issue => issue.review?.reason).length, 2); assert.equal(full.gate.status, 'FAILED');

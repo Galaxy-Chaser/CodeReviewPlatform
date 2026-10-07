@@ -136,11 +136,29 @@ test('real HTTP workflow, persistence, failure states and local access boundarie
   assert.equal(display.sourceSnapshot.fileCount, completed.sourceSnapshot.files.length);
   assert.equal(display.sourceSnapshot.digest, completed.sourceSnapshot.digest);
   assert.equal(display.sourceSnapshot.files, undefined);
+  assert.equal(display.reviewSummary.total, 5); assert.equal(display.reviewSummary.complete, true);
+  assert.deepEqual(display.reviewSummary.risk, { high: 3, medium: 0, low: 2, unknown: 0 });
   assert.equal((await call(`/api/report/view?id=${scan.id}`)).body.issueCount, 5);
+  const beforeFilters = await fs.readFile(path.join(dir, 'details', scan.id + '.json'));
   const repairPage = (await call(`/api/tasks/page?id=${scan.id}`)).body;
   assert.equal(repairPage.total, 5); assert.equal(repairPage.limit, 25);
   assert.equal(repairPage.tasks.length, 5); assert.ok(repairPage.tasks[0].trackingId);
-  assert.equal((await call(`/api/tasks/page?id=${scan.id}&offset=25`)).body.tasks.length, 0);
+  assert.deepEqual(repairPage.filters, { risk: 'all', review: 'all' });
+  assert.deepEqual(repairPage.summary, display.reviewSummary);
+  const beyondPage = (await call(`/api/tasks/page?id=${scan.id}&offset=25`)).body;
+  assert.equal(beyondPage.tasks.length, 5); assert.equal(beyondPage.offset, 0);
+  const highPage = (await call(`/api/tasks/page?id=${scan.id}&risk=high&review=open`)).body;
+  assert.equal(highPage.total, 3); assert.equal(highPage.summary.total, 5);
+  assert.deepEqual(highPage.tasks.map(t => t.number), [1, 2, 3]);
+  const lowPage = (await call(`/api/tasks/page?id=${scan.id}&risk=low&review=active`)).body;
+  assert.deepEqual(lowPage.tasks.map(t => t.number), [4, 5]);
+  const emptyPage = (await call(`/api/tasks/page?id=${scan.id}&risk=high&review=confirmed&offset=25`)).body;
+  assert.equal(emptyPage.total, 0); assert.equal(emptyPage.offset, 0); assert.deepEqual(emptyPage.tasks, []);
+  assert.equal(emptyPage.scan.gate.status, 'FAILED'); assert.equal(emptyPage.summary.total, 5);
+  for (const query of ['risk=', 'risk=HIGH', 'review=', 'review=unknown', 'risk=high&risk=low', 'review=open&review=active', 'offset=0&offset=25', 'id=' + scan.id, 'unknown=value']) {
+    assert.equal((await call(`/api/tasks/page?id=${scan.id}&${query}`)).status, 400, query);
+  }
+  assert.deepEqual(await fs.readFile(path.join(dir, 'details', scan.id + '.json')), beforeFilters);
   assert.equal((await call(`/api/tasks/page?id=${scan.id}&offset=-1`)).status, 400);
   assert.equal((await call(`/api/tasks/page?id=${scan.id}&offset=2.5`)).status, 400);
   assert.equal((await call(`/api/tasks/page?id=${scan.id}&limit=100`)).status, 400);

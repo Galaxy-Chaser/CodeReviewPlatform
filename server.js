@@ -24,6 +24,7 @@ const { ReportStore, summarize } = require('./lib/report-store');
 const queries = require('./lib/queries');
 const { writeArray } = require('./lib/json-export');
 const { writeSarif } = require('./lib/sarif');
+const { findingFilters } = require('./lib/finding-view');
 const { createReadStream } = require('node:fs');
 const { pipeline } = require('node:stream/promises');
 const { identify, carryReviews, setReview } = require('./lib/issue-review');
@@ -399,11 +400,12 @@ async function api(req, res, url) {
   }
   if (req.method === 'GET' && url.pathname === '/api/tasks/page') {
     const parameters = Object.fromEntries(url.searchParams);
-    if (Object.keys(parameters).some(key => !['id', 'offset'].includes(key))) fail('修复清单只支持报告编号和分页位置', 400);
+    if (Object.keys(parameters).some(key => !['id', 'offset', 'risk', 'review'].includes(key)) || [...url.searchParams.keys()].length !== Object.keys(parameters).length) fail('修复清单参数不正确', 400);
     const { offset } = queries.options({ offset: parameters.offset });
+    const filters = findingFilters({ risk: parameters.risk, review: parameters.review });
     const scan = await loadReport(parameters.id);
     if (scan.status !== 'completed') fail('请先完成一次扫描', 400);
-    return json(res, { scanId: scan.id, scan: summarize(scan), ...repairTaskPage({ ...scan, issues: identify(scan) }, offset) });
+    return json(res, { scanId: scan.id, scan: summarize(scan), ...repairTaskPage({ ...scan, issues: identify(scan) }, offset, filters) });
   }
   if (req.method === 'GET' && url.pathname === '/api/environment') return json(res, await environment());
   if (req.method === 'GET' && url.pathname === '/api/scan') {
