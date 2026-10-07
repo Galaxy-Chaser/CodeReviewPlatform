@@ -76,6 +76,8 @@ function pagination(total, key) {
 
 /** Escape every user-controlled value before using HTML templates. */
 function e(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+/** line 来自分析结果；未知位置明确提示，不能显示虚假的第 1 行。 */
+function issueLine(line) { return Number.isSafeInteger(line) && line > 0 ? String(line) : '行号未提供'; }
 function time(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未扫描'; }
 function num(value, suffix = '') { return value == null ? '—' : `${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}${suffix}`; }
 function metric(value) { return value == null ? '未检测' : num(value, '%'); }
@@ -115,7 +117,7 @@ function ensurePolling() {
     if (document.hidden || pollingBusy) return;
     pollingBusy = true;
     try {
-      await refresh(page !== 'settings' && page !== 'quality' && !$('#dialog').open);
+      await refresh(!['settings', 'quality', 'work', 'knowledge'].includes(page) && !$('#dialog').open);
       if (viewedScanId && $('#dialog').open) await scanDetail(viewedScanId, true);
       if (viewedPipelineId && $('#dialog').open) await pipelineReportModal(viewedPipelineId, !state.active, true);
       if (!state.active) { clearInterval(polling); polling = null; toast('扫描已结束，请查看扫描历史。'); }
@@ -168,7 +170,7 @@ function projectsPage() {
 function issuesPage() {
   const list = currentList('issues'), rows = list.rows;
   return heading('问题中心', '展示整个项目的问题；本次 Git 改动结果请在扫描详情中查看。', button('修复任务清单', 'tasks-latest') + button('导出问题', 'export-issues')) +
-    `<section class="panel"><div class="filter-bar"><input id="issue-search" placeholder="搜索问题、文件或规则…" aria-label="搜索问题" value="${e(search)}"><select id="filter-project" aria-label="筛选项目">${projectOptions()}</select><select id="filter-severity" aria-label="筛选风险"><option value="">所有风险等级</option>${Object.entries(severityNames).map(([id, label]) => `<option value="${id}" ${severity === id ? 'selected' : ''}>${label}</option>`).join('')}</select><select id="filter-review" aria-label="筛选审查状态"><option value="">所有审查状态</option>${Object.entries(reviewNames).map(([id, label]) => `<option value="${id}" ${reviewStatus === id ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div class="panel-foot"><span>匹配 ${list.total ?? '…'} 条 · 各项目最近一次已完成的扫描</span><span>本地规则为启发式提示，请结合代码确认</span></div>${rows.length ? rows.map(i => `<article class="issue-row"><span class="issue-marker ${e(i.severity)}"></span><div class="issue-main"><div class="issue-title">${e(i.message)}</div><div class="issue-meta"><span>${e(state.projects.find(p => p.id === i.projectId)?.name)}</span><span>${e(i.file)}:${i.line}</span><span>${e(i.rule)}</span><span>${i.type === 'LOCAL' ? '本地规则' : 'SonarQube'}</span></div>${i.excerpt ? `<code>${e(i.excerpt)}</code>` : ''}${issueReviewControls(i, i.scanId)}</div><span class="badge ${['HIGH', 'CRITICAL', 'BLOCKER'].includes(i.severity) ? 'bad' : 'warning'}">${e(severityNames[i.severity] || i.severity)}</span>${button('查看代码', 'source', `data-project="${i.projectId}" data-file="${e(i.file)}" data-line="${i.line}"`, 'small')}</article>`).join('') : listPlaceholder(list, '这里暂时没有问题', state.scans.length ? '当前筛选条件下没有发现问题。可以调整筛选，或再次检查代码。' : '完成一次扫描后，在这里查看真实的问题、位置与修复建议。', button('开始体检', 'scan', '', 'primary'))}${pagination(list.total, 'issues')}</section>`;
+    `<section class="panel"><div class="filter-bar"><input id="issue-search" placeholder="搜索问题、文件或规则…" aria-label="搜索问题" value="${e(search)}"><select id="filter-project" aria-label="筛选项目">${projectOptions()}</select><select id="filter-severity" aria-label="筛选风险"><option value="">所有风险等级</option>${Object.entries(severityNames).map(([id, label]) => `<option value="${id}" ${severity === id ? 'selected' : ''}>${label}</option>`).join('')}</select><select id="filter-review" aria-label="筛选审查状态"><option value="">所有审查状态</option>${Object.entries(reviewNames).map(([id, label]) => `<option value="${id}" ${reviewStatus === id ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div class="panel-foot"><span>匹配 ${list.total ?? '…'} 条 · 各项目最近一次已完成的扫描</span><span>本地规则为启发式提示，请结合代码确认</span></div>${rows.length ? rows.map(i => `<article class="issue-row"><span class="issue-marker ${e(i.severity)}"></span><div class="issue-main"><div class="issue-title">${e(i.message)}</div><div class="issue-meta"><span>${e(state.projects.find(p => p.id === i.projectId)?.name)}</span><span>${e(i.file)}:${issueLine(i.line)}</span><span>${e(i.rule)}</span><span>${i.type === 'LOCAL' ? '本地规则' : 'SonarQube'}</span></div>${i.excerpt ? `<code>${e(i.excerpt)}</code>` : ''}${issueReviewControls(i, i.scanId)}</div><span class="badge ${['HIGH', 'CRITICAL', 'BLOCKER'].includes(i.severity) ? 'bad' : 'warning'}">${e(severityNames[i.severity] || i.severity)}</span>${button('查看代码', 'source', `data-project="${i.projectId}" data-file="${e(i.file)}" data-line="${i.line}"`, 'small')}</article>`).join('') : listPlaceholder(list, '这里暂时没有问题', state.scans.length ? '当前筛选条件下没有发现问题。可以调整筛选，或再次检查代码。' : '完成一次扫描后，在这里查看真实的问题、位置与修复建议。', button('开始体检', 'scan', '', 'primary'))}${pagination(list.total, 'issues')}</section>`;
 }
 function historyPage() {
   const list = currentList('history'), scans = list.rows;
@@ -366,7 +368,7 @@ async function issueReviewModal(id, trackingId) {
   const issue = report.issues.find(i => i.trackingId === trackingId);
   if (!issue) throw Error('问题已变化，请重新读取');
   const r = issue.review;
-  modal('问题审查', `<h3>${e(issue.message)}</h3><p>${e(issue.file)}:${issue.line} · ${e(issue.rule)}</p><code>${e(issue.excerpt)}</code><p class="notice">审查仅记录判断。已排除的问题仍保留在报告与门禁中；变更或再次出现需要重新审查。</p>${r?.prior ? `<p>此前判断：${e(reviewNames[r.prior.status])} · ${e(r.prior.reason)}</p>` : ''}${r?.history?.length ? `<details><summary>之前的审查记录</summary>${r.history.map(h => `<p>${e(time(h.updatedAt))} · ${e(reviewNames[h.status])} · ${e(h.reason)}</p>`).join('')}</details>` : ''}<form id="issue-review-form">${origin ? `<input type="hidden" name="returnOffset" value="${origin.offset}"><input type="hidden" name="returnGithub" value="${origin.github}">` : ''}<input type="hidden" name="id" value="${id}"><input type="hidden" name="trackingId" value="${e(trackingId)}"><div class="field"><label for="review-state">审查状态</label><select id="review-state" name="status">${Object.entries(reviewNames).map(([s, n]) => `<option value="${s}" ${s === (r?.status || 'open') ? 'selected' : ''}>${e(n)}</option>`).join('')}</select></div><div class="field"><label for="review-reason">判断依据（8 到 2000 字）</label><textarea id="review-reason" name="reason" rows="4" minlength="8" maxlength="2000" required>${e(r?.reason)}</textarea></div><div class="form-actions">${origin ? button('返回修复清单', 'tasks-page', `data-id="${id}" data-offset="${origin.offset}" data-github="${origin.github}"`) : ''}<button type="submit" class="button primary">保存审查</button></div></form>`);
+  modal('问题审查', `<h3>${e(issue.message)}</h3><p>${e(issue.file)}:${issueLine(issue.line)} · ${e(issue.rule)}</p><code>${e(issue.excerpt)}</code><p class="notice">审查仅记录判断。已排除的问题仍保留在报告与门禁中；变更或再次出现需要重新审查。</p>${r?.prior ? `<p>此前判断：${e(reviewNames[r.prior.status])} · ${e(r.prior.reason)}</p>` : ''}${r?.history?.length ? `<details><summary>之前的审查记录</summary>${r.history.map(h => `<p>${e(time(h.updatedAt))} · ${e(reviewNames[h.status])} · ${e(h.reason)}</p>`).join('')}</details>` : ''}<form id="issue-review-form">${origin ? `<input type="hidden" name="returnOffset" value="${origin.offset}"><input type="hidden" name="returnGithub" value="${origin.github}"><input type="hidden" name="returnRisk" value="${e(origin.risk)}"><input type="hidden" name="returnReview" value="${e(origin.review)}">` : ''}<input type="hidden" name="id" value="${id}"><input type="hidden" name="trackingId" value="${e(trackingId)}"><div class="field"><label for="review-state">审查状态</label><select id="review-state" name="status">${Object.entries(reviewNames).map(([s, n]) => `<option value="${s}" ${s === (r?.status || 'open') ? 'selected' : ''}>${e(n)}</option>`).join('')}</select></div><div class="field"><label for="review-reason">判断依据（8 到 2000 字）</label><textarea id="review-reason" name="reason" rows="4" minlength="8" maxlength="2000" required>${e(r?.reason)}</textarea></div><div class="form-actions">${origin ? button('返回修复清单', 'tasks-page', `data-id="${id}" data-offset="${origin.offset}" data-github="${origin.github}" data-risk="${e(origin.risk)}" data-review="${e(origin.review)}"`) : ''}<button type="submit" class="button primary">保存审查</button></div></form>`);
 }
 
 /** Render only the bounded quality-record list, preserving in-progress GitHub form input. */
@@ -383,12 +385,12 @@ async function acceptanceModal(id) {
 }
 
 /** Display immutable PR metadata and bounded local findings; no remote source is retained. */
-async function githubDetail(id, offset = 0) {
+async function githubDetail(id, offset = 0, filters = {}) {
   const request = beginDetailRead();
-  const [r, result] = await Promise.all([api('/api/report/view?id=' + encodeURIComponent(id), undefined, request.signal), api('/api/tasks/page?id=' + encodeURIComponent(id) + '&offset=' + offset, undefined, request.signal)]);
+  const [r, result] = await Promise.all([api('/api/report/view?id=' + encodeURIComponent(id), undefined, request.signal), api(taskPageUrl(id, offset, filters), undefined, request.signal)]);
   if (!request.current()) return;
-  modal('GitHub PR 检查报告', `<h3>${e(r.repository)} #${r.number} · ${e(r.title)}</h3><p>${badge(r.gate.status)} ${acceptanceBadge(r)}</p><p class="subtle">HEAD ${e(r.headSha)}<br>BASE ${e(r.baseSha)}</p><div class="notice">${r.notes.map(e).join('<br>')}</div><p class="subtle">${r.changedFiles} 个改动文件 · 检查 ${r.checkedFiles} 个 Java / SQL 文件 · ${r.touchedTests} 个测试文件改动</p>${repairTaskList(result, id, true)}<div class="form-actions"><a class="button" href="${e(r.url)}" target="_blank" rel="noreferrer">打开 GitHub PR ↗</a>${button('记录验收', 'acceptance', `data-id="${id}"`)}${button('导出修复与验收清单', 'export-tasks', `data-id="${id}"`, 'primary')}</div>`);
-  repairReturn = { id, offset, github: true };
+  modal('GitHub PR 检查报告', `<h3>${e(r.repository)} #${r.number} · ${e(r.title)}</h3><p>${badge(r.gate.status)} ${acceptanceBadge(r)}</p><p class="subtle">HEAD ${e(r.headSha)}<br>BASE ${e(r.baseSha)}</p><div class="notice">${r.notes.map(e).join('<br>')}</div><p class="subtle">${r.changedFiles} 个改动文件 · 检查 ${r.checkedFiles} 个 Java / SQL 文件 · ${r.touchedTests} 个测试文件改动</p>${repairTaskList(result, id, true)}<div class="form-actions"><a class="button" href="${e(r.url)}" target="_blank" rel="noreferrer">打开 GitHub PR ↗</a>${button('记录验收', 'acceptance', `data-id="${id}"`)}${button('导出修复与验收清单', 'export-tasks', `data-id="${id}"`, 'primary')}${button('导出 SARIF', 'export-sarif', `data-id="${id}"`)}</div>`);
+  repairReturn = { id, offset: result.offset, github: true, ...(result.filters || { risk: 'all', review: 'all' }) };
 }
 function modal(title, html) { cancelDetailRead(); repairReturn = null; viewedScanId = null; viewedPipelineId = null; $('#dialog-content').innerHTML = `<div class="modal-head"><h2>${title}</h2><button class="close" data-action="close" aria-label="关闭">×</button></div>${html}`; $('#dialog').scrollTop = 0; if (!$('#dialog').open) $('#dialog').showModal(); }
 function addProjectModal(item) {
@@ -418,20 +420,39 @@ function progress(scan) {
   return `<div class="pipeline">${stages.map(([id, title], index) => `<div class="pipeline-step ${index < at ? 'done' : index === at ? 'current' : ''}"><span>${index < at ? '✓' : index + 1}</span>${title}</div>`).join('')}</div><p class="subtle">${scan.status === 'running' ? '正在执行' : scan.status === 'completed' ? '已完成' : '执行结束'} · 已用时 ${seconds < 60 ? seconds + ' 秒' : Math.floor(seconds / 60) + ' 分 ' + seconds % 60 + ' 秒'} · ${scan.scope === 'changed' ? '本次 Git 改动' : '整个项目'}</p>${scan.fileProgress ? `<p class="subtle">已检查 ${scan.fileProgress.completed} / ${scan.fileProgress.total} 个源文件</p>` : ''}${scan.status === 'running' && scan.stage === 'local' ? `<div class="form-actions">${button(scan.stopRequested ? '正在停止…' : '停止本地规则检查', 'stop-scan', `data-id="${scan.id}" ${scan.stopRequested ? 'disabled' : ''}`)}</div>` : ''}`;
 }
 
-/** Render one page of findings; paging retains global numbering and never changes full exports. */
+/** summary 只包含保存报告计数；未完成或旧数据缺失不能显示为最终检查结果。 */
+function reviewSummaryPanel(summary) {
+  if (!summary) return '';
+  if (!summary.available) return '<p class="notice">汇总未知：原报告未提供完整问题列表，请重新检查后核对。</p>';
+  const risk = summary.risk, review = summary.review;
+  return `<section class="notice" aria-label="报告发现摘要"><strong>${summary.complete ? '保存报告全部发现' : '未完成检查的已记录发现'}：${e(summary.total)} 条 · 涉及 ${e(summary.files)} 个文件名</strong><p>高风险 ${e(risk.high)} · 中风险 ${e(risk.medium)} · 低风险与提示 ${e(risk.low)}${risk.unknown ? ' · 风险未知 ' + e(risk.unknown) : ''}</p><p>待审查 ${e(review.open)} · 已确认 ${e(review.confirmed)} · 处理中 ${e(review.fixing)} · 已排除 ${e(review.dismissed)}${review.unknown ? ' · 状态未知 ' + e(review.unknown) : ''}</p>${summary.missingFiles ? '<p>文件名未提供：' + e(summary.missingFiles) + ' 条</p>' : ''}<p class="subtle">${summary.complete ? '人工审查与筛选不改变原报告门禁；完整导出保留所有发现。' : '这不是最终汇总，不能据此判断检查或验收通过。'}</p></section>`;
+}
+
+/** id/offset 定位报告和匹配结果页，filters 为当前选择；默认全部保留原接口形式。 */
+function taskPageUrl(id, offset, filters = {}) {
+  const query = new URLSearchParams({ id, offset });
+  for (const key of ['risk', 'review']) if (filters[key] !== undefined && filters[key] !== 'all') query.set(key, filters[key]);
+  return '/api/tasks/page?' + query;
+}
+
+/** result 为有界匹配页，id/github 标明返回位置；编号来自完整报告，导出保持完整。 */
 function repairTaskList(result, id, github = false) {
   const { tasks, total, offset, limit } = result;
-  const attrs = position => 'data-id="' + id + '" data-offset="' + position + '" data-github="' + github + '"';
-  return '<p class="subtle" aria-live="polite">' + (tasks.length ? '显示第 ' + (offset + 1) + '–' + (offset + tasks.length) + ' 条，共 ' + total + ' 条' : total ? '此页没有问题，共 ' + total + ' 条' : '本次扫描没有需要整理的修复任务。') + '</p><div class="task-list">' + tasks.map(t => '<article class="repair-task"><div class="task-heading"><span class="badge ' + (['HIGH', 'CRITICAL', 'BLOCKER'].includes(t.severity) ? 'bad' : 'warning') + '">' + e(severityNames[t.severity] || t.severity) + '</span><strong>' + t.number + '. ' + e(t.message) + '</strong></div><p class="subtle">' + e(t.file) + ':' + t.line + ' · ' + e(t.rule) + '</p>' + (github && t.excerpt ? '<code>' + e(t.excerpt) + '</code>' : '') + issueReviewControls(t, id) + '<p>' + e(t.advice) + '</p><p class="subtle">验收：' + e(t.verification) + '</p></article>').join('') + '</div><div class="form-actions">' + (offset > 0 ? button('上一页', 'tasks-page', attrs(Math.max(0, offset - limit))) : '') + (offset + tasks.length < total ? button('下一页', 'tasks-page', attrs(offset + limit)) : '') + '</div>';
+  const filters = result.filters || { risk: 'all', review: 'all' }, filtered = filters.risk !== 'all' || filters.review !== 'all';
+  const attrs = position => 'data-id="' + e(id) + '" data-offset="' + position + '" data-github="' + github + '" data-risk="' + e(filters.risk) + '" data-review="' + e(filters.review) + '"';
+  const choices = (values, selected) => Object.entries(values).map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${e(label)}</option>`).join('');
+  return reviewSummaryPanel(result.summary) + `<div id="repair-filters" class="form-grid" data-id="${e(id)}" data-github="${github}" data-risk="${e(filters.risk)}" data-review="${e(filters.review)}"><div class="field"><label for="repair-risk">风险范围</label><select id="repair-risk">${choices({ all: '全部风险', high: '高风险', medium: '中风险', low: '低风险与提示' }, filters.risk)}</select></div><div class="field"><label for="repair-review">审查状态筛选</label><select id="repair-review">${choices({ all: '全部状态', active: '未排除', ...reviewNames }, filters.review)}</select></div></div>` +
+    (filtered ? '<p class="subtle">筛选匹配 ' + total + ' 条，报告全部 ' + e(result.summary?.total ?? '未知') + ' 条；条目编号沿用原报告。</p>' : '') +
+    '<p class="subtle" aria-live="polite">' + (tasks.length ? '显示第 ' + (offset + 1) + '–' + (offset + tasks.length) + ' 条，共 ' + total + ' 条' : filtered ? '此筛选没有匹配问题；完整发现与原门禁仍保留。' : '本报告没有已记录的发现；仍需按检查范围核对验收。') + '</p><div class="task-list">' + tasks.map(t => '<article class="repair-task"><div class="task-heading"><span class="badge ' + (['HIGH', 'CRITICAL', 'BLOCKER'].includes(t.severity) ? 'bad' : 'warning') + '">' + e(severityNames[t.severity] || t.severity) + '</span><strong>' + t.number + '. ' + e(t.message) + '</strong></div><p class="subtle">' + e(t.file) + ':' + issueLine(t.line) + ' · ' + e(t.rule) + '</p>' + (github && t.excerpt ? '<code>' + e(t.excerpt) + '</code>' : '') + issueReviewControls(t, id) + '<p>' + e(t.advice) + '</p><p class="subtle">验收：' + e(t.verification) + '</p></article>').join('') + '</div><div class="form-actions">' + (offset > 0 ? button('上一页', 'tasks-page', attrs(Math.max(0, offset - limit))) : '') + (offset + tasks.length < total ? button('下一页', 'tasks-page', attrs(offset + limit)) : '') + '</div>';
 }
 /** Load only 25 risk-ordered tasks; id identifies the report and offset is the requested page start. */
-async function showTasks(id, offset = 0) {
+async function showTasks(id, offset = 0, filters = {}) {
   const request = beginDetailRead();
-  const result = await api('/api/tasks/page?id=' + encodeURIComponent(id) + '&offset=' + offset, undefined, request.signal);
+  const result = await api(taskPageUrl(id, offset, filters), undefined, request.signal);
   if (!request.current()) return;
   const scan = result.scan, item = state.projects.find(p => p.id === scan?.projectId);
-  modal('修复任务清单', '<p class="subtle">' + e(item?.name) + ' · ' + e(time(scan?.startedAt)) + ' · ' + (scan?.scope === 'changed' ? '本次 Git 改动' : '整个项目') + '</p><div class="notice">按风险排序，每页最多 25 条。建议结合代码确认后再修复；完整导出包含全部问题，可交给 Codex。</div>' + repairTaskList(result, id) + '<div class="form-actions">' + button('导出 Markdown', 'export-tasks', 'data-id="' + id + '"', 'primary') + '</div>');
-  repairReturn = { id, offset, github: false };
+  modal('修复任务清单', '<p class="subtle">' + e(item?.name) + ' · ' + e(time(scan?.startedAt)) + ' · ' + (scan?.scope === 'changed' ? '本次 Git 改动' : '整个项目') + '</p><p>原报告门禁：' + badge(scan?.gate?.status) + '</p>' + repairTaskList(result, id) + '<div class="form-actions">' + button('导出 Markdown', 'export-tasks', 'data-id="' + id + '"', 'primary') + '</div>');
+  repairReturn = { id, offset: result.offset, github: false, ...(result.filters || { risk: 'all', review: 'all' }) };
 }
 
 /** Compare stable rule/file/line identities against a user-selected baseline. */
@@ -443,17 +464,18 @@ async function scanDetail(id, background = false) {
   const item = state.projects.find(p => p.id === scan.projectId);
   const diff = scan.comparison;
   const comparison = diff?.available ? `<div class="comparison"><h3>相对基线 / 上次同类扫描</h3><div class="comparison-counts"><span class="red">新增 ${diff.addedCount}</span><span class="green">已消失 ${diff.removedCount}</span><span>仍存在 ${diff.unchanged}</span></div>${Object.entries(diff.delta).map(([key, value]) => `<p class="subtle">${({ coverage: '覆盖率', duplicated_lines_density: '重复率', complexity: '复杂度' })[key]}变化：${value > 0 ? '+' : ''}${value}${key === 'complexity' ? '' : ' 个百分点'}</p>`).join('')}<p class="subtle">本地问题按规则、文件与证据匹配；仅行号移动不会被当作修复。</p></div>` : `<p class="subtle">${e(diff?.reason || '选择基线或完成第二次同类检查后，可比较变化。')}</p>`;
-  modal('扫描详情', `${scan.archivedAt ? '<p class="notice">这份报告已归档。证据仍保留；需要设为基线时，请先恢复报告。</p>' : ''}<p class="subtle">${e(item?.name)} · ${e(time(scan.startedAt))} · ${scan.mode === 'full' ? '完整体检' : scan.scope === 'changed' ? '本次 Git 改动' : '本地规则'}</p><p>${badge(scan.status)} ${badge(scan.gate?.status)}</p>${progress(scan)}${scan.error ? `<div class="notice red">${e(scan.error)}</div>` : ''}${scan.scope === 'changed' ? `<div class="notice">仅报告本次改动附近的问题，不能据此判断整个项目通过。涉及 ${scan.checkedFiles ?? '待计算'} 个改动文件。${e(scan.changes?.description)}</div>` : ''}${gateEvidence(scan)}${sourceVersionPanel(scan)}${scan.acceptancePipeline ? button('查看验收流水线', 'pipeline-report', `data-id="${scan.id}"`) : ''}<p>${button('查看当前验收条件', 'acceptance', `data-id="${scan.id}"`)}</p><div class="detail-grid">${stat('问题数量', scan.status === 'completed' ? issueCount(scan) : '未完成', scan.status === 'completed' ? '本次检查结果' : '未完成的检查不能计为零问题')}${stat('覆盖率', metric(scan.metrics?.coverage), '仅来自 JaCoCo / SonarQube')}${stat('安全热点', num(scan.metrics?.security_hotspots), '请在 SonarQube 中审查')}${stat('重复率', metric(scan.metrics?.duplicated_lines_density), 'SonarQube 实测')}${stat('复杂度', num(scan.metrics?.complexity), 'SonarQube 实测')}${stat('代码行数', num(scan.metrics?.ncloc ?? scan.metrics?.lines), scan.mode === 'local' ? '整个项目，包括上下文' : '有效代码行')}</div>${comparison}${scan.sonarGate ? `<p class="subtle">SonarQube 自身门禁：${e(scan.sonarGate.status)}</p>` : ''}<pre class="log">${e(scan.logs || '等待日志…')}</pre><div class="form-actions">${scan.status === 'completed' ? button('修复任务清单', 'tasks', `data-id="${scan.id}"`) : ''}${scan.status === 'completed' && scan.scope !== 'changed' && !scan.archivedAt ? button('设为基线', 'baseline', `data-id="${scan.id}" data-project="${scan.projectId}"`) : ''}${button('导出报告', 'export-scan', `data-id="${scan.id}"`)}</div>`);
+  modal('扫描详情', `${scan.archivedAt ? '<p class="notice">这份报告已归档。证据仍保留；需要设为基线时，请先恢复报告。</p>' : ''}<p class="subtle">${e(item?.name)} · ${e(time(scan.startedAt))} · ${scan.mode === 'full' ? '完整体检' : scan.scope === 'changed' ? '本次 Git 改动' : '本地规则'}</p><p>${badge(scan.status)} ${badge(scan.gate?.status)}</p>${progress(scan)}${reviewSummaryPanel(scan.reviewSummary)}${scan.error ? `<div class="notice red">${e(scan.error)}</div>` : ''}${scan.scope === 'changed' ? `<div class="notice">仅报告本次改动附近的问题，不能据此判断整个项目通过。涉及 ${scan.checkedFiles ?? '待计算'} 个改动文件。${e(scan.changes?.description)}</div>` : ''}${gateEvidence(scan)}${sourceVersionPanel(scan)}${scan.acceptancePipeline ? button('查看验收流水线', 'pipeline-report', `data-id="${scan.id}"`) : ''}<p>${button('查看当前验收条件', 'acceptance', `data-id="${scan.id}"`)}</p><div class="detail-grid">${stat('问题数量', scan.status === 'completed' ? issueCount(scan) : '未完成', scan.status === 'completed' ? '本次检查结果' : '未完成的检查不能计为零问题')}${stat('覆盖率', metric(scan.metrics?.coverage), '仅来自 JaCoCo / SonarQube')}${stat('安全热点', num(scan.metrics?.security_hotspots), '请在 SonarQube 中审查')}${stat('重复率', metric(scan.metrics?.duplicated_lines_density), 'SonarQube 实测')}${stat('复杂度', num(scan.metrics?.complexity), 'SonarQube 实测')}${stat('代码行数', num(scan.metrics?.ncloc ?? scan.metrics?.lines), scan.mode === 'local' ? '整个项目，包括上下文' : '有效代码行')}</div>${comparison}${scan.sonarGate ? `<p class="subtle">SonarQube 自身门禁：${e(scan.sonarGate.status)}</p>` : ''}<pre class="log">${e(scan.logs || '等待日志…')}</pre><div class="form-actions">${scan.status === 'completed' ? button('修复任务清单', 'tasks', `data-id="${scan.id}"`) : ''}${scan.status === 'completed' && scan.scope !== 'changed' && !scan.archivedAt ? button('设为基线', 'baseline', `data-id="${scan.id}" data-project="${scan.projectId}"`) : ''}${button('导出报告', 'export-scan', `data-id="${scan.id}"`)}${scan.status === 'completed' ? button('导出 SARIF', 'export-sarif', `data-id="${scan.id}"`) : ''}</div>`);
   if (scan.status === 'running') viewedScanId = scan.id;
   if (previousScroll) $('#dialog').scrollTop = previousScroll;
 }
+/** options 指定保存报告及可选导出格式；下载只分享记录的发现，不改变验收结果。 */
 async function exportReport(options) {
   const result = await api('/api/export', options);
-  modal('报告已导出', `<div class="notice">报告已保存到本机，即使浏览器不支持下载也能直接找到文件。</div><p class="subtle">${e(result.path)}</p><div class="form-actions"><a class="button primary" href="${e(result.url)}" download="${e(result.file)}">下载副本</a>${button('完成', 'close')}</div>`);
+  modal(options.kind === 'sarif' ? 'SARIF 已导出' : '报告已导出', `<div class="notice">${options.kind === 'sarif' ? '可在对应项目或仓库中交给支持 SARIF 的检查工具。保留原检查范围、风险与门禁；不证明当前代码或测试通过。' : '报告已保存到本机，即使浏览器不支持下载也能直接找到文件。'}</div><p class="subtle">${e(result.path)}</p><div class="form-actions"><a class="button primary" href="${e(result.url)}" download="${e(result.file)}">下载副本</a>${button('完成', 'close')}</div>`);
 }
 
 document.addEventListener('click', async event => {
-  const control = event.target.closest('[data-action]'); if (!control) return;
+  const control = event.target.closest('[data-action]'); if (!control || control.disabled) return;
   if (control.dataset.action.startsWith('work-')) return;
   const { action, id, project, file, line } = control.dataset;
   try {
@@ -584,7 +606,8 @@ document.addEventListener('click', async event => {
     if (action === 'tasks') await showTasks(id);
     if (action === 'tasks-page') {
       const offset = Number(control.dataset.offset);
-      if (control.dataset.github === 'true') await githubDetail(id, offset); else await showTasks(id, offset);
+      const filters = { risk: control.dataset.risk || 'all', review: control.dataset.review || 'all' };
+      if (control.dataset.github === 'true') await githubDetail(id, offset, filters); else await showTasks(id, offset, filters);
     }
     if (action === 'tasks-latest') {
       const scan = selectedProject ? latest(selectedProject) : state.scans.find(s => s.status === 'completed' && s.scope !== 'changed');
@@ -592,11 +615,12 @@ document.addEventListener('click', async event => {
       await showTasks(scan.id);
     }
     if (action === 'export-tasks') await exportReport({ scanId: id, kind: 'tasks' });
+    if (action === 'export-sarif') await exportReport({ scanId: id, kind: 'sarif' });
     if (action === 'baseline') { await api('/api/baseline', { projectId: project, scanId: id }); await refresh(); $('#dialog').close(); toast('已保存质量基线。'); }
     if (action === 'source') {
       const result = await api(`/api/source?project=${encodeURIComponent(project)}&file=${encodeURIComponent(file)}`);
       const rows = result.source.split('\n'), at = Number(line);
-      modal('源文件位置', `<p class="subtle">${e(file)}:${at}</p><div class="source">${rows.map((row, i) => `<span class="source-line ${i + 1 === at ? 'highlight' : ''}"><span class="line-num">${i + 1}</span>${e(row)}</span>`).join('')}</div>`);
+      modal('源文件位置', `<p class="subtle">${e(file)}:${issueLine(at)}</p><div class="source">${rows.map((row, i) => `<span class="source-line ${i + 1 === at ? 'highlight' : ''}"><span class="line-num">${i + 1}</span>${e(row)}</span>`).join('')}</div>`);
       $('#dialog .highlight')?.scrollIntoView({ block: 'center' });
     }
     if (action === 'export-issues') await exportReport({ projectId: selectedProject, severity, search, reviewStatus });
@@ -637,7 +661,8 @@ document.addEventListener('submit', async event => {
         await refresh(false);
         if (!saveRequest.current()) return;
         const offset = Number(data.get('returnOffset'));
-        if (data.get('returnGithub') === 'true') await githubDetail(data.get('id'), offset); else await showTasks(data.get('id'), offset);
+        const filters = { risk: data.get('returnRisk') || 'all', review: data.get('returnReview') || 'all' };
+        if (data.get('returnGithub') === 'true') await githubDetail(data.get('id'), offset, filters); else await showTasks(data.get('id'), offset, filters);
       } else { $('#dialog').close(); await refresh(); }
       toast('审查记录已保存；自动门禁保持原检查结果。');
     }
@@ -678,7 +703,29 @@ document.addEventListener('submit', async event => {
     toast(error.message); if ($('#github-progress')) $('#github-progress').textContent = '';
   } finally { if (submit) submit.disabled = false; }
 });
-document.addEventListener('change', event => {
+document.addEventListener('change', async event => {
+  if (['repair-risk', 'repair-review'].includes(event.target.id)) {
+    const container = event.target.closest('#repair-filters');
+    const filters = { risk: $('#repair-risk').value, review: $('#repair-review').value };
+    const selection = {}; container.filterRequest = selection;
+    // 旧行与分页属于已显示筛选；等待新结果时暂禁用，防止动作取消新选择或捕获旧返回位置。
+    container.filterControls ||= [...document.querySelectorAll('#dialog .repair-task button, #dialog [data-action="tasks-page"]')].map(control => [control, control.disabled]);
+    for (const [control] of container.filterControls) control.disabled = true;
+    try {
+      if (container.dataset.github === 'true') await githubDetail(container.dataset.id, 0, filters); else await showTasks(container.dataset.id, 0, filters);
+    } catch (error) {
+      if (container.filterRequest === selection && document.contains(container) && error.name !== 'AbortError') {
+        $('#repair-risk').value = container.dataset.risk; $('#repair-review').value = container.dataset.review;
+        toast('筛选未更新，请重试：' + error.message);
+      }
+    } finally {
+      if (container.filterRequest === selection && document.contains(container)) {
+        for (const [control, disabled] of container.filterControls) control.disabled = disabled;
+        container.filterControls = null;
+      }
+    }
+    return;
+  }
   if (event.target.id === 'pipeline-project') { pipelineProjectId = event.target.value; render(); }
   if (event.target.id === 'pipeline-full') { const enabled = event.target.checked; $('#pipeline-min-tests').disabled = !enabled; $('#pipeline-no-skipped').disabled = !enabled; if (!enabled) { $('#pipeline-min-tests').value = 0; $('#pipeline-no-skipped').checked = false; } }
   if (event.target.id === 'filter-review') { reviewStatus = event.target.value; listOffsets.issues = 0; render(); }

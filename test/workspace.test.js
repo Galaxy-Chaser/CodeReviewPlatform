@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-const { WorkspaceStore, saveRecord, changeTask, validateDocument, activeLease } = require('../lib/workspace');
+const { WorkspaceStore, saveRecord, changeTask, validateDocument, activeLease, taskCoordination } = require('../lib/workspace');
 const human = { type: 'human', id: '', name: '本地用户' }, agent = { type: 'agent', id: crypto.randomUUID(), name: 'fixture agent' };
 const scope = () => {}, projectId = crypto.randomUUID();
 function empty() { return { format: 'CodeHealthWorkspace', version: 1, revision: 0, requirements: [], tasks: [], knowledge: [] }; }
@@ -73,4 +73,44 @@ test('bounded inputs, cross-project relationships, report references and history
   assert.throws(() => validateDocument(badSource, new Set([projectId]), new Map([[submissionReport, projectId], [sourceReport, crypto.randomUUID()]])), /扫描引用/);
   const bounded = empty(), row = task(bounded); row.history = Array(100).fill(row.history[0]);
   assert.throws(() => act(bounded, row, 'block', human, { reason: '有 100 条历史时应明确拒绝继续保存' }), /100 条历史/);
+});
+
+test('submission provenance survives requirement changes, rebinds and rework without relabeling old evidence as current', () => {
+  const doc = empty(), r = req(doc), t = task(doc, r.id);
+  act(doc, t, 'claim'); act(doc, t, 'submit', human, { submission: { ...submission, requirementVersion: 999 } });
+  assert.equal(t.submission.requirementId, r.id); assert.equal(t.submission.requirementVersion, 1);
+  assert.equal(taskCoordination(doc, t, human).submissionRequirement.status, 'CURRENT');
+  const original = structuredClone(t.submission);
+  act(doc, t, 'approve', human, { reason: '人工核对当前需求与实际测试结果' });
+  saveRecord(doc, 'requirements', { ...r, expectedVersion: r.version, criteria: '新版还需检查边界输入的结果' }, human, scope);
+  act(doc, t, 'reopen', human, { reason: '需求发生变化，按新版条件重新处理' });
+  saveRecord(doc, 'tasks', { ...t, expectedVersion: t.version, criteria: r.criteria }, human, scope);
+  const rebound = taskCoordination(doc, t, human);
+  assert.equal(rebound.requirement.status, 'CURRENT'); assert.equal(rebound.submissionRequirement.status, 'CHANGED');
+  assert.deepEqual(t.submission, original); validateDocument(doc);
+  act(doc, t, 'claim'); act(doc, t, 'submit', human, { submission });
+  assert.equal(t.submission.requirementVersion, 2); assert.equal(taskCoordination(doc, t, human).submissionRequirement.status, 'CURRENT');
+  assert.deepEqual(t.history.find(h => h.action === 'submit').detail, original);
+  act(doc, t, 'reject', human, { reason: '先保留记录，再检查独立任务的场景' });
+  saveRecord(doc, 'tasks', { ...t, expectedVersion: t.version, requirementId: '' }, human, scope);
+  assert.equal(taskCoordination(doc, t, human).submissionRequirement.status, 'CHANGED');
+  act(doc, t, 'claim'); act(doc, t, 'submit', human, { submission });
+  assert.equal(t.submission.requirementId, ''); assert.equal(t.submission.requirementVersion, null);
+  assert.equal(taskCoordination(doc, t, human).submissionRequirement.status, 'CURRENT');
+  act(doc, t, 'reject', human, { reason: '将原独立任务关联到真实的项目需求' });
+  saveRecord(doc, 'tasks', { ...t, expectedVersion: t.version, requirementId: r.id }, human, scope);
+  assert.equal(taskCoordination(doc, t, human).submissionRequirement.status, 'CHANGED');
+});
+
+test('legacy evidence remains readable as unknown; invalid or foreign submission bindings cannot be restored', () => {
+  const doc = empty(), r = req(doc), t = task(doc, r.id);
+  act(doc, t, 'claim'); act(doc, t, 'submit', human, { submission });
+  const legacy = structuredClone(doc); delete legacy.tasks[0].submission.requirementId; delete legacy.tasks[0].submission.requirementVersion;
+  validateDocument(legacy); assert.equal(taskCoordination(legacy, legacy.tasks[0], human).submissionRequirement.status, 'UNKNOWN');
+  const foreign = saveRecord(doc, 'requirements', { ...r, id: '', projectId: crypto.randomUUID() }, human, scope);
+  for (const provenance of [{ requirementId: r.id }, { requirementVersion: 1 }, { requirementId: r.id, requirementVersion: 0 },
+    { requirementId: r.id, requirementVersion: 2 }, { requirementId: '', requirementVersion: 1 }, { requirementId: foreign.id, requirementVersion: 1 }]) {
+    const invalid = structuredClone(doc); invalid.tasks[0].submission = { ...submission, ...provenance };
+    assert.throws(() => validateDocument(invalid), /版本|编号|项目/);
+  }
 });

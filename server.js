@@ -23,6 +23,8 @@ const { listPulls, reviewPull } = require('./lib/github');
 const { ReportStore, summarize } = require('./lib/report-store');
 const queries = require('./lib/queries');
 const { writeArray } = require('./lib/json-export');
+const { writeSarif } = require('./lib/sarif');
+const { findingFilters } = require('./lib/finding-view');
 const { createReadStream } = require('node:fs');
 const { pipeline } = require('node:stream/promises');
 const { identify, carryReviews, setReview } = require('./lib/issue-review');
@@ -172,6 +174,18 @@ async function exportIssues(filters) {
   const handle = await fs.open(destination + '.tmp', 'wx');
   try {
     await writeArray(handle, queries.matchingIssues(state, loadReport, filters));
+    await handle.close(); await fs.rename(destination + '.tmp', destination);
+    return { path: destination, url: `/api/export-file?file=${file}`, file };
+  } catch (error) { await handle.close().catch(() => {}); await fs.unlink(destination + '.tmp').catch(() => {}); throw error; }
+}
+
+/** report 为已保存完整报告；临时文件由本次请求独占，任何失败都撤销，不修改原报告或门禁。 */
+async function exportSarif(report) {
+  const file = `sarif-${crypto.randomUUID()}.sarif`, destination = path.join(DATA, 'reports', file);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const handle = await fs.open(destination + '.tmp', 'wx');
+  try {
+    await writeSarif(handle, report);
     await handle.close(); await fs.rename(destination + '.tmp', destination);
     return { path: destination, url: `/api/export-file?file=${file}`, file };
   } catch (error) { await handle.close().catch(() => {}); await fs.unlink(destination + '.tmp').catch(() => {}); throw error; }
@@ -341,9 +355,10 @@ async function api(req, res, url) {
     const file = url.searchParams.get('file') || '';
     const backup = /^backup-[a-f0-9-]{36}\.jsonl\.gz$/.test(file);
     const picture = /^browser-[a-f0-9-]{36}-[a-z0-9-]{1,40}\.png$/.test(file);
-    if (!backup && !picture && !/^(report|issues|tasks|brief|pipeline)-[a-f0-9-]{36}\.(json|md)$/.test(file)) fail('导出文件不存在', 404);
+    const sarif = /^sarif-[a-f0-9-]{36}\.sarif$/.test(file);
+    if (!backup && !picture && !sarif && !/^(report|issues|tasks|brief|pipeline)-[a-f0-9-]{36}\.(json|md)$/.test(file)) fail('导出文件不存在', 404);
     const reportPath = path.join(DATA, backup ? 'backups' : 'reports', file), stat = await fs.stat(reportPath);
-    res.writeHead(200, { 'Content-Type': backup ? 'application/gzip' : picture ? 'image/png' : file.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'application/json; charset=utf-8', 'Content-Length': stat.size, 'Content-Disposition': `${picture ? 'inline' : 'attachment'}; filename="${file}"`, 'Cache-Control': 'no-store' });
+    res.writeHead(200, { 'Content-Type': backup ? 'application/gzip' : picture ? 'image/png' : sarif ? 'application/sarif+json; charset=utf-8' : file.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'application/json; charset=utf-8', 'Content-Length': stat.size, 'Content-Disposition': `${picture ? 'inline' : 'attachment'}; filename="${file}"`, 'Cache-Control': 'no-store' });
     return pipeline(createReadStream(reportPath), res);
   }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(res, { ...queries.compactState(state, visibleRunningScan()), revision, rules: catalog, checklist, briefFields, tokenConfigured: !!token, githubTokenConfigured: !!githubToken, githubActive, active });
@@ -385,11 +400,12 @@ async function api(req, res, url) {
   }
   if (req.method === 'GET' && url.pathname === '/api/tasks/page') {
     const parameters = Object.fromEntries(url.searchParams);
-    if (Object.keys(parameters).some(key => !['id', 'offset'].includes(key))) fail('修复清单只支持报告编号和分页位置', 400);
+    if (Object.keys(parameters).some(key => !['id', 'offset', 'risk', 'review'].includes(key)) || [...url.searchParams.keys()].length !== Object.keys(parameters).length) fail('修复清单参数不正确', 400);
     const { offset } = queries.options({ offset: parameters.offset });
+    const filters = findingFilters({ risk: parameters.risk, review: parameters.review });
     const scan = await loadReport(parameters.id);
     if (scan.status !== 'completed') fail('请先完成一次扫描', 400);
-    return json(res, { scanId: scan.id, scan: summarize(scan), ...repairTaskPage({ ...scan, issues: identify(scan) }, offset) });
+    return json(res, { scanId: scan.id, scan: summarize(scan), ...repairTaskPage({ ...scan, issues: identify(scan) }, offset, filters) });
   }
   if (req.method === 'GET' && url.pathname === '/api/environment') return json(res, await environment());
   if (req.method === 'GET' && url.pathname === '/api/scan') {
@@ -579,9 +595,12 @@ async function api(req, res, url) {
     return json(res, await preflight(project(data.projectId), state.settings, token, data.mode, data.scope || 'project'));
   }
   if (url.pathname === '/api/export') {
+    if (data.kind !== undefined && !['report', 'tasks', 'sarif'].includes(data.kind)) fail('导出格式不正确');
+    if (data.kind === 'sarif' && !data.scanId) fail('请指定一份完整报告以导出 SARIF');
     let payload, kind;
     if (data.scanId) {
       payload = await loadReport(data.scanId);
+      if (data.kind === 'sarif') return json(res, await exportSarif(payload));
       kind = data.kind === 'tasks' ? 'tasks' : 'report';
       if (kind === 'tasks') {
         if (payload.status !== 'completed') fail('请等待扫描完成后导出修复任务');

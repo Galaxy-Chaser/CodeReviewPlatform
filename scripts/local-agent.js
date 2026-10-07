@@ -15,11 +15,12 @@ async function main() {
   /** 读取有界证据文件；文件路径只是本地输入，不发送给平台执行。 */
   async function input(name) { if (!name) throw Error('请使用 --file 指定 JSON 文件'); const s = await fs.stat(name); if (!s.isFile() || s.size > 32000) throw Error('证据 JSON 文件最多 32 KB'); return JSON.parse(await fs.readFile(name, 'utf8')); }
   let result;
-  if (command === 'list' || command === 'knowledge-list') {
-    const args = process.argv.slice(3), query = new URLSearchParams({ kind: command === 'list' ? 'tasks' : 'knowledge' });
-    const options = { '--project': 'projectId', '--status': 'status', '--offset': 'offset', '--search': 'search' };
+  if (['list', 'knowledge-list', 'sync'].includes(command)) {
+    const args = process.argv.slice(3), query = new URLSearchParams();
+    const options = command === 'sync' ? { '--project': 'projectId', '--kind': 'kind' } : { '--project': 'projectId', '--status': 'status', '--offset': 'offset', '--search': 'search' };
     for (let i = 0; i < args.length; i += 2) { if (!options[args[i]] || args[i + 1] === undefined || query.has(options[args[i]])) throw Error('列表参数不正确'); query.set(options[args[i]], args[i + 1]); }
-    result = await request('list?' + query);
+    if (!query.has('kind')) query.set('kind', command === 'knowledge-list' ? 'knowledge' : 'tasks');
+    result = await request((command === 'sync' ? 'sync?' : 'list?') + query);
   }
   else if (command === 'knowledge' && taskId === '--file' && extra && !file) result = await request('save', { kind: 'knowledge', record: await input(extra) });
   else if (['context', 'claim', 'heartbeat', 'release', 'submit'].includes(command) && /^[a-f0-9-]{36}$/.test(taskId || '')) {
@@ -32,7 +33,7 @@ async function main() {
       else if (extra) throw Error('不支持额外参数');
       result = await request('task', data);
     }
-  } else throw Error('用法：list/knowledge-list [--project ID --status STATUS --search TEXT --offset N] | context/claim/heartbeat/release TASK_ID | submit TASK_ID --file evidence.json | knowledge --file draft.json');
+  } else throw Error('用法：sync [--project ID --kind tasks/knowledge] | list/knowledge-list [--project ID --status STATUS --search TEXT --offset N] | context/claim/heartbeat/release TASK_ID | submit TASK_ID --file evidence.json | knowledge --file draft.json');
   console.log(JSON.stringify(result, null, 2));
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

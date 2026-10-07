@@ -25,9 +25,10 @@ function setupPage() {
 
 /** 离开列表后中止读取并释放页面缓存；记录仍在服务端，返回时按页重新读取。 */
 function releaseViewMemory(next) {
+  cancelDetailRead();
   for (const key of Object.keys(listData)) if (key !== next) delete listData[key];
   for (const key of Object.keys(listRequests)) if (key !== next) { listRequests[key].controller.abort(); delete listRequests[key]; }
-  if (!['work', 'knowledge'].includes(next)) { workController?.abort(); workController = null; workData = null; workSequence++; }
+  if (!['work', 'knowledge'].includes(next)) { stopWorkSync(); workData = null; }
   if (next !== 'quality') githubPullData = null;
 }
 

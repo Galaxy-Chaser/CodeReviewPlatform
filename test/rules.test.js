@@ -5,6 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { scanLocal, codeOnly } = require('../lib/rules');
 const { evaluateGate, importAnalysis } = require('../lib/sonar');
+const { writeSarif } = require('../lib/sarif');
+const crypto = require('node:crypto');
 const http = require('node:http');
 
 test('known faulty Java fixture produces exactly five actionable findings', async () => {
@@ -55,7 +57,10 @@ test('Sonar integration imports measures, all issues and separate server gate', 
     const url = new URL(req.url, 'http://localhost');
     let data;
     if (url.pathname === '/api/measures/component') data = { component: { measures: [{ metric: 'coverage', value: '77.3' }, { metric: 'new_coverage', period: { value: '81' } }, { metric: 'new_duplicated_lines_density', period: { value: '2' } }, { metric: 'security_hotspots', value: '3' }] } };
-    if (url.pathname === '/api/issues/search') data = { paging: { total: 1 }, issues: [{ key: 'x', rule: 'java:S1', component: 'bid:src/A.java', line: 7, message: 'Fix', severity: 'MAJOR', type: 'CODE_SMELL', status: 'OPEN' }] };
+    if (url.pathname === '/api/issues/search') {
+      const known = { key: 'x', rule: 'java:S1', component: 'bid:src/A.java', line: 7, message: 'Fix', severity: 'MAJOR', type: 'CODE_SMELL', status: 'OPEN' };
+      data = { paging: { total: 4 }, issues: [known, ...[undefined, null, 0].map((line, index) => ({ ...known, key: 'unknown-' + index, line }))] };
+    }
     if (url.pathname === '/api/qualitygates/project_status') data = { projectStatus: { status: 'ERROR' } };
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data));
   });
@@ -67,4 +72,13 @@ test('Sonar integration imports measures, all issues and separate server gate', 
   assert.equal(report.issues[0].file, 'src/A.java');
   assert.equal(report.gate.status, 'PASSED');
   assert.equal(report.sonarGate.status, 'ERROR');
+  assert.equal(report.issues[0].line, 7); assert.equal(report.issues.length, 4);
+  assert.ok(report.issues.slice(1).every(issue => !Object.hasOwn(issue, 'line')));
+  const chunks = [];
+  await writeSarif({ write: async (buffer, offset, length) => { chunks.push(Buffer.from(buffer.subarray(offset, offset + length))); return { bytesWritten: length }; } },
+    { ...report, id: crypto.randomUUID(), status: 'completed', mode: 'full', scope: 'project' });
+  const sonar = JSON.parse(Buffer.concat(chunks).toString('utf8')).runs[1];
+  assert.equal(sonar.properties.sonarGateStatus, 'ERROR'); assert.equal(sonar.properties.gateStatus, 'PASSED');
+  assert.equal(sonar.results[0].locations[0].physicalLocation.region.startLine, 7);
+  assert.ok(sonar.results.slice(1).every(issue => !issue.locations[0].physicalLocation.region));
 });
