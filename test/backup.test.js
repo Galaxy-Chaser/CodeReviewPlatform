@@ -9,6 +9,7 @@ const { spawn } = require('node:child_process');
 const { createBackup, restoreBackup } = require('../lib/backup');
 const { acquireDataLock, recoverDataLock } = require('../lib/data-lock');
 const { ReportStore } = require('../lib/report-store');
+const { writeSarif } = require('../lib/sarif');
 
 /** Build real persisted index/detail files and authored evidence, with exports and unrelated files to test selection. */
 async function fixture(t) {
@@ -38,6 +39,21 @@ test('compressed backup restores exact state, reports, evidence, baseline, brief
   for (const name of ['state.json', 'details/' + reportId + '.json', 'briefs/' + briefId + '.json', 'reports/tasks-' + reportId + '.md']) assert.deepEqual(await fs.readFile(path.join(root, name)), await fs.readFile(path.join(destination, name)));
   await assert.rejects(restoreBackup(archive, destination), /目标已存在/);
   const lock = await acquireDataLock(destination); await lock.release();
+});
+
+test('portable SARIF exports survive backup and restore byte for byte; partial and unrelated extensions stay excluded', async t => {
+  const { root, parent, state, reportId } = await fixture(t);
+  const report = JSON.parse(await fs.readFile(path.join(root, 'details', reportId + '.json'), 'utf8'));
+  const filename = 'sarif-' + crypto.randomUUID() + '.sarif', source = path.join(root, 'reports', filename);
+  const handle = await fs.open(source, 'wx'); try { await writeSarif(handle, report); } finally { await handle.close(); }
+  await fs.writeFile(source + '.tmp', 'unfinished-export');
+  await fs.writeFile(source.replace('.sarif', '.json'), 'unrelated-extension');
+  const backup = await createBackup(root, state), destination = path.join(parent, 'sarif-restored');
+  const restored = await restoreBackup(path.join(root, 'backups', backup.file), destination);
+  assert.equal(restored.files, 5);
+  assert.deepEqual(await fs.readFile(path.join(destination, 'reports', filename)), await fs.readFile(source));
+  const names = await fs.readdir(path.join(destination, 'reports'));
+  assert.ok(!names.some(name => name.endsWith('.tmp'))); assert.ok(!names.includes(filename.replace('.sarif', '.json')));
 });
 
 test('corruption, missing completion, unsafe paths and duplicate files never publish a restore destination', async t => {

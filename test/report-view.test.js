@@ -35,7 +35,8 @@ test('repair pages match complete exports without missing or repeated findings, 
 test('PR detail requests only display evidence and the selected repair page', async () => {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
   const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
-  const functions = source.slice(source.indexOf('async function githubDetail('), source.indexOf('function modal(')) +
+  const functions = source.slice(source.indexOf('function issueLine('), source.indexOf('function time(')) +
+    source.slice(source.indexOf('async function githubDetail('), source.indexOf('function modal(')) +
     source.slice(source.indexOf('function repairTaskList('), source.indexOf('/** Load only 25'));
   const requests = [], rendered = [];
   const context = vm.createContext({
@@ -49,8 +50,35 @@ test('PR detail requests only display evidence and the selected repair page', as
     issueReviewControls: () => 'Review controls', modal: (title, html) => rendered.push({ title, html })
   });
   vm.runInContext(functions, context); await vm.runInContext("githubDetail('report-id', 25)", context);
+  assert.equal(vm.runInContext('issueLine(undefined)', context), '行号未提供');
+  const unknown = vm.runInContext("repairTaskList({ tasks: [{ number: 1, message: 'File finding', severity: 'HIGH', file: 'Flow.java', rule: 'empty-catch' }], total: 1, offset: 0, limit: 25 }, 'report-id')", context);
+  assert.match(unknown, /Flow.java:行号未提供/); assert.ok(!unknown.includes(':undefined'));
   assert.deepEqual(requests, ['/api/report/view?id=report-id', '/api/tasks/page?id=report-id&offset=25']);
   assert.match(rendered[0].html, /26\. Second page finding/); assert.match(rendered[0].html, /Review controls/);
   assert.match(rendered[0].html, /catch \(Exception e\) \{\}/); assert.match(rendered[0].html, /data-github="true"/);
   assert.match(rendered[0].html, /上一页/); assert.doesNotMatch(rendered[0].html, /下一页/);
+});
+
+test('opening source preserves unknown positions and highlights only a supplied valid line', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  let click;
+  const rendered = [], requests = [], errors = [];
+  const context = vm.createContext({
+    document: { addEventListener: (name, handler) => { assert.equal(name, 'click'); click = handler; } },
+    api: async url => { requests.push(url); return { source: 'first\nsecond\nthird' }; },
+    modal: (title, html) => rendered.push({ title, html }), e: value => String(value ?? ''),
+    $: () => null, toast: error => errors.push(error)
+  });
+  vm.runInContext(source.slice(source.indexOf('function issueLine('), source.indexOf('function time(')) +
+    source.slice(source.indexOf("document.addEventListener('click'"), source.indexOf("document.addEventListener('submit'")), context);
+  for (const line of [undefined, 'undefined', '0', '2']) {
+    await click({ target: { closest: () => ({ dataset: { action: 'source', project: 'project', file: 'Flow.java', line } }) } });
+    const html = rendered.at(-1)?.html || '';
+    assert.match(html, line === '2' ? /Flow.java:2/ : /Flow.java:行号未提供/);
+    assert.doesNotMatch(html, /:NaN|:undefined/);
+    assert.equal((html.match(/class="source-line highlight"/g) || []).length, line === '2' ? 1 : 0);
+    if (line === '2') assert.match(html, /source-line highlight[^]*second/);
+  }
+  assert.equal(requests.length, 4); assert.deepEqual(errors, []);
 });

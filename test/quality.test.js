@@ -8,6 +8,7 @@ const { reviewPull, repository, patchRanges, listPulls } = require('../lib/githu
 const { checklist, validateAcceptance, acceptanceStatus } = require('../lib/acceptance');
 const { scanLocal } = require('../lib/rules');
 const { tasksMarkdown } = require('../lib/reports');
+const { writeSarif } = require('../lib/sarif');
 
 /** Represent a GitHub snapshot including the real blob hash and full diff metadata. */
 function fixture(options = {}) {
@@ -40,6 +41,12 @@ test('PR snapshot finds new risks, masks credentials and exports fixed commit ev
   assert.match(markdown, /HEAD：aaaaaaaa/);
   assert.match(markdown, /人工验收记录/);
   assert.match(markdown, /GitHub PR 改动/);
+  const chunks = [];
+  await writeSarif({ write: async (buffer, offset, length) => { chunks.push(Buffer.from(buffer.subarray(offset, offset + length))); return { bytesWritten: length }; } }, report);
+  const sarif = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  assert.equal(sarif.runs[0].results.length, 2); assert.equal(sarif.runs[0].properties.gateStatus, 'FAILED');
+  assert.equal(sarif.runs[0].versionControlProvenance[0].revisionId, report.headSha);
+  assert.ok(!JSON.stringify(sarif).includes('liveCredential987')); assert.ok(!JSON.stringify(sarif).includes('private-token'));
 });
 
 test('PR missing or truncated patches, deleted files and excluded folders never produce a false pass', async () => {

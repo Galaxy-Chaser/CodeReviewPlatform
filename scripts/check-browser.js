@@ -120,6 +120,13 @@ async function runBrowserRegression(options = {}) {
         const downloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载副本', exact: true }).click();
         const download = await downloaded; const downloadedPath = path.join(temporary, 'download.json'); await download.saveAs(downloadedPath);
         const result = JSON.parse(await fs.readFile(downloadedPath, 'utf8')); assert.equal(result.id, scanId);
+        await close(); await page.locator(`[data-action="scan-detail"][data-id="${scanId}"]`).click();
+        await page.getByRole('button', { name: '导出 SARIF', exact: true }).click();
+        await page.getByRole('heading', { name: 'SARIF 已导出', exact: true }).waitFor();
+        const sarifDownloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载副本', exact: true }).click();
+        const sarifFile = path.join(temporary, 'empty.sarif'); await (await sarifDownloaded).saveAs(sarifFile);
+        const sarif = JSON.parse(await fs.readFile(sarifFile, 'utf8'));
+        assert.equal(sarif.version, '2.1.0'); assert.deepEqual(sarif.runs[0].results, []); assert.equal(sarif.runs[0].properties.reportId, scanId);
       },
       pipeline: async () => {
         await nav('验收流水线'); await page.getByRole('button', { name: '建立验收方案', exact: true }).click();
@@ -205,6 +212,14 @@ async function runBrowserRegression(options = {}) {
         const downloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载副本', exact: true }).click();
         const download = await downloaded, file = path.join(temporary, 'all-tasks.md'); await download.saveAs(file);
         assert.equal((await fs.readFile(file, 'utf8')).match(/^## \d+\. /gm).length, 62);
+        await close(); await page.locator(`[data-action="scan-detail"][data-id="${reportId}"]`).click();
+        await page.getByRole('button', { name: '导出 SARIF', exact: true }).click();
+        const sarifDownloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载副本', exact: true }).click();
+        const sarifFile = path.join(temporary, 'all-findings.sarif'); await (await sarifDownloaded).saveAs(sarifFile);
+        const sarif = JSON.parse(await fs.readFile(sarifFile, 'utf8'));
+        assert.equal(sarif.runs[0].results.length, 62); assert.equal(sarif.runs[0].properties.gateStatus, 'FAILED');
+        assert.equal(sarif.runs[0].results.filter(r => r.properties.reviewStatus === 'confirmed').length, 1);
+        assert.ok(sarif.runs[0].results.some(r => r.locations[0].physicalLocation.region.startLine > 50));
         await fs.writeFile(sourceFile, original);
       },
         setup: async () => {
