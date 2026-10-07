@@ -1,6 +1,6 @@
 {
   "name": "code-health-center",
-  "version": "1.23.0",
+  "version": "1.24.0",
   "private": true,
   "description": "Local Java code health center with SonarQube integration",
   "engines": {
@@ -11,7 +11,8 @@
     "test": "node --test test/*.test.js",
     "check:platform": "node scripts/check-platform.js",
     "check:browser": "node scripts/check-browser.js",
-    "check:iteration": "node scripts/check-iteration.js"
+    "check:iteration": "node scripts/check-iteration.js",
+    "measure:collaboration": "node --expose-gc scripts/measure-collaboration.js"
   },
   "devDependencies": {
     "playwright": "1.63.0"

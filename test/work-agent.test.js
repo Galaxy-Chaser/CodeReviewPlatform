@@ -30,8 +30,13 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
   const outsider = (await create('tasks', { projectId: other.id, title: '其他项目任务', description: '其他项目的独立任务说明', criteria: '不能被未授权 agent 读取或修改', requireReport: false })).row;
   const a = await call('/api/work/agents/register', { name: 'CLI fixture agent', projectIds: [p.id] });
   const b = await call('/api/work/agents/register', { name: 'second fixture agent', projectIds: [p.id] });
+  const c = await call('/api/work/agents/register', { name: 'separate project fixture agent', projectIds: [other.id] });
   const sync = async (kind = 'tasks', token = a.token) => (await call('/api/agent/sync?kind=' + kind, null, token)).token;
   const initialToken = await sync(); assert.match(initialToken, /^[a-f0-9]{64}$/);
+  const otherInitialToken = await sync('tasks', c.token);
+  assert.notEqual(otherInitialToken, initialToken);
+  const concurrent = await Promise.all([sync(), sync('tasks', c.token), sync('tasks', b.token)]);
+  assert.deepEqual(concurrent, [initialToken, otherInitialToken, initialToken]);
   assert.equal((await call('/api/agent/list', null, a.token)).token, initialToken);
   assert.equal(await sync(), initialToken);
   await call('/api/agent/sync?projectId=' + other.id, null, a.token, 403);
@@ -40,6 +45,7 @@ test('real HTTP and local agent CLI collaborate, enforce scopes/review, link iss
   await call('/api/work/sync?kind=invalid', null, null, 403);
   await call('/api/work/task', { id: outsider.id, expectedVersion: outsider.version, action: 'claim' });
   assert.equal(await sync(), initialToken);
+  assert.notEqual(await sync('tasks', c.token), otherInitialToken);
   await call('/api/agent/context?id=' + task.id, null, null, 401);
   await call('/api/agent/context?id=' + outsider.id, null, a.token, 403);
   await call('/api/work/task', { id: task.id, expectedVersion: task.version, action: 'claim' }, a.token, 403);
